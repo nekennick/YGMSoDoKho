@@ -1,0 +1,55 @@
+import type { ExternalProduct } from "@/lib/product-catalog/contracts";
+import type { ProductLayoutRecord } from "@/lib/product-layout/types";
+
+export type CanvasProduct = {
+  productId: number;
+  name: string;
+  x: number;
+  y: number;
+  color: string;
+};
+
+export type ProductOption = {
+  productId: number;
+  name: string;
+};
+
+export type WarehouseInitialData = {
+  canvasProducts: CanvasProduct[];
+  availableProducts: ProductOption[];
+  orphanLayoutProductIds: number[];
+};
+
+export function mergeCatalogAndLayouts(
+  products: readonly ExternalProduct[],
+  layouts: readonly ProductLayoutRecord[],
+): WarehouseInitialData {
+  const layoutByProductId = new Map(layouts.map((layout) => [layout.productId, layout]));
+  const knownProductIds = new Set<number>();
+  const canvasProducts: CanvasProduct[] = [];
+  const availableProducts: ProductOption[] = [];
+
+  for (const product of products) {
+    if (knownProductIds.has(product.id)) continue;
+    knownProductIds.add(product.id);
+
+    const layout = layoutByProductId.get(product.id);
+    if (layout) {
+      canvasProducts.push({
+        productId: product.id,
+        name: product.name,
+        x: layout.x,
+        y: layout.y,
+        color: layout.color,
+      });
+    } else {
+      availableProducts.push({ productId: product.id, name: product.name });
+    }
+  }
+
+  const orphanLayoutProductIds = layouts
+    .filter((layout) => !knownProductIds.has(layout.productId))
+    .map((layout) => layout.productId);
+
+  return { canvasProducts, availableProducts, orphanLayoutProductIds };
+}

@@ -1,0 +1,18 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model ProductLayout {
+  id        String   @id @default(cuid())
+  productId Int      @unique
+  x         Float
+  y         Float
+  color     String   @default("#3b82f6")
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+}

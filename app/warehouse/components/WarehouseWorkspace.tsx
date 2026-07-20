@@ -1,6 +1,7 @@
 "use client";
 
 import type { WarehouseDataResult } from "@/lib/warehouse/initial-data";
+import { CanvasViewport } from "@/app/warehouse/components/CanvasViewport";
 
 export function WarehouseWorkspace({ result }: { result: WarehouseDataResult }) {
   if (!result.ok) {
@@ -23,19 +24,8 @@ export function WarehouseWorkspace({ result }: { result: WarehouseDataResult }) 
         <span className="text-slate-400">·</span>
         <span className="text-slate-500">{availableProducts.length} sản phẩm có thể thêm</span>
       </div>
-      <section className="relative flex-1 overflow-hidden bg-slate-50">
-        {canvasProducts.map((product) => (
-          <div
-            key={product.productId}
-            className="absolute min-w-48 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-white shadow-sm"
-            style={{ left: product.x, top: product.y, backgroundColor: product.color }}
-          >
-            <span aria-hidden="true">📦 </span>{product.name}
-          </div>
-        ))}
-        {canvasProducts.length === 0 && (
-          <div className="flex h-full items-center justify-center text-sm text-slate-500">Thêm sản phẩm để bắt đầu bố trí.</div>
-        )}
+      <section className="relative flex-1">
+        <CanvasViewport products={canvasProducts} />
       </section>
     </main>
   );

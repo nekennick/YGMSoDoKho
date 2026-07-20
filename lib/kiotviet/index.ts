@@ -8,3 +8,4 @@ export {
 } from "@/lib/kiotviet/errors";
 export { KiotVietHttpClient } from "@/lib/kiotviet/http-client";
 export { KiotVietTokenProvider } from "@/lib/kiotviet/token-provider";
+export { KiotVietProductCatalogService } from "@/lib/kiotviet/product-catalog";

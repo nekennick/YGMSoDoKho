@@ -1,8 +1,5 @@
 import { listProductLayouts } from "@/lib/product-layout/repository";
-import { getKiotVietConfig } from "@/lib/kiotviet/config";
-import { KiotVietHttpClient } from "@/lib/kiotviet/http-client";
-import { KiotVietProductCatalogService } from "@/lib/kiotviet/product-catalog";
-import { KiotVietTokenProvider } from "@/lib/kiotviet/token-provider";
+import { getProductCatalogService } from "@/lib/warehouse/catalog-service";
 import { mergeCatalogAndLayouts, type WarehouseInitialData } from "@/lib/product-catalog/merge";
 
 export type WarehouseDataResult =
@@ -11,14 +8,7 @@ export type WarehouseDataResult =
 
 export async function loadWarehouseInitialData(): Promise<WarehouseDataResult> {
   try {
-    const config = getKiotVietConfig();
-    const tokenProvider = new KiotVietTokenProvider(config);
-    const client = new KiotVietHttpClient(config, tokenProvider);
-    const catalogService = new KiotVietProductCatalogService(
-      client,
-      process.env.KIOTVIET_PRODUCTS_PATH ?? "/products",
-      Number(process.env.KIOTVIET_PAGE_SIZE ?? 100),
-    );
+    const catalogService = getProductCatalogService();
     const [products, layouts] = await Promise.all([
       catalogService.listProducts(),
       listProductLayouts(),

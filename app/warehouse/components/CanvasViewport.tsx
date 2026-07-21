@@ -1,7 +1,6 @@
 "use client";
 
 import { useRef } from "react";
-import { useState } from "react";
 import { DndContext, type DragEndEvent, useDraggable } from "@dnd-kit/core";
 import { TransformComponent, TransformWrapper, type ReactZoomPanPinchRef } from "react-zoom-pan-pinch";
 import type { CanvasProduct } from "@/lib/product-catalog/merge";
@@ -32,23 +31,22 @@ function DraggableProduct({ product, scale }: { product: CanvasProduct; scale: n
   );
 }
 
-export function CanvasViewport({ products }: { products: CanvasProduct[] }) {
+export function CanvasViewport({ products, onProductsChange }: { products: CanvasProduct[]; onProductsChange: (products: CanvasProduct[]) => void }) {
   const { spacePressed } = useKeyboard();
-  const [canvasProducts, setCanvasProducts] = useState(products);
   const transformRef = useRef<ReactZoomPanPinchRef | null>(null);
 
   return (
     <DndContext onDragEnd={async (event: DragEndEvent) => {
       if (!event.active || (event.delta.x === 0 && event.delta.y === 0)) return;
       const productId = Number(event.active.id);
-      const previous = canvasProducts.find((product) => product.productId === productId);
+      const previous = products.find((product) => product.productId === productId);
       if (!previous) return;
       const scale = transformRef.current?.instance.transformState.scale ?? 1;
       const next = { ...previous, x: previous.x + event.delta.x / scale, y: previous.y + event.delta.y / scale };
-      setCanvasProducts((current) => current.map((product) => product.productId === productId ? next : product));
+      onProductsChange(products.map((product) => product.productId === productId ? next : product));
       const result = await updateProductPositionAction({ productId, x: next.x, y: next.y });
       if (!result.ok) {
-        setCanvasProducts((current) => current.map((product) => product.productId === productId ? previous : product));
+        onProductsChange(products.map((product) => product.productId === productId ? previous : product));
       }
     }}>
     <TransformWrapper
@@ -87,7 +85,7 @@ export function CanvasViewport({ products }: { products: CanvasProduct[] }) {
           </div>
           <TransformComponent wrapperClass="!h-full !w-full" contentClass="!h-full !w-full">
             <div className="relative h-[10000px] w-[10000px]">
-              {canvasProducts.map((product) => <DraggableProduct key={product.productId} product={product} scale={instance.transformState.scale} />)}
+              {products.map((product) => <DraggableProduct key={product.productId} product={product} scale={instance.transformState.scale} />)}
             </div>
           </TransformComponent>
         </div>

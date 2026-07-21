@@ -25,7 +25,8 @@ function DraggableProduct({ product, scale, selected, onSelect, onContextMenu }:
       {...attributes}
       onClick={(event) => onSelect(event.shiftKey)}
       onContextMenu={onContextMenu}
-      className={`product-chip absolute min-w-48 touch-none rounded-lg border px-3 py-2 text-sm font-medium text-white shadow-sm ${selected ? "border-yellow-300 ring-2 ring-yellow-300/80" : "border-slate-200"}`}
+      data-product-id={product.productId}
+      className={`product-chip absolute min-w-48 touch-none rounded-lg border px-3 py-2 text-sm font-medium text-white shadow-sm transition-[filter,box-shadow] ${selected ? "border-yellow-300 brightness-125 saturate-150 ring-4 ring-yellow-300/80 ring-offset-2 ring-offset-slate-50" : "border-slate-200"}`}
       style={{
         left: product.x,
         top: product.y,
@@ -45,7 +46,7 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
   const [dragging, setDragging] = useState(false);
   const [activeProductId, setActiveProductId] = useState<number | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
-  const [contextMenu, setContextMenu] = useState<{ productId: number; x: number; y: number } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ productId: number; x: number; y: number; selectedIds: number[] } | null>(null);
   const [selectionBox, setSelectionBox] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
   const selectionStart = useRef<{ x: number; y: number } | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
@@ -83,7 +84,7 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
         const top = Math.min(selectionStart.current.y, endY);
         const right = Math.max(selectionStart.current.x, endX);
         const bottom = Math.max(selectionStart.current.y, endY);
-        const ids = Array.from(canvasRef.current.querySelectorAll<HTMLElement>(".product-chip")).filter((node) => { const item = node.getBoundingClientRect(); const x = item.left - rect.left; const y = item.top - rect.top; return x < right && x + item.width > left && y < bottom && y + item.height > top; }).map((node) => Number(node.parentElement?.dataset.productId)).filter(Number.isFinite);
+        const ids = Array.from(canvasRef.current.querySelectorAll<HTMLElement>(".product-chip")).filter((node) => { const item = node.getBoundingClientRect(); const x = item.left - rect.left; const y = item.top - rect.top; return x < right && x + item.width > left && y < bottom && y + item.height > top; }).map((node) => Number(node.dataset.productId)).filter(Number.isFinite);
         if (ids.length) setSelectedIds(ids);
       }
       selectionStart.current = null; setSelectionBox(null);
@@ -159,14 +160,14 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
           </div>
           <TransformComponent wrapperClass="!h-full !w-full" contentClass="!h-full !w-full">
             <div className="relative h-[10000px] w-[10000px]">
-              {products.map((product) => <div key={product.productId} onFocus={() => setActiveProductId(product.productId)}><DraggableProduct product={product} scale={instance.transformState.scale} selected={selectedIds.includes(product.productId)} onSelect={(shift) => setSelectedIds((ids) => shift ? (ids.includes(product.productId) ? ids.filter((id) => id !== product.productId) : [...ids, product.productId]) : [product.productId])} onContextMenu={(event) => { event.preventDefault(); setSelectedIds((ids) => ids.includes(product.productId) ? ids : [product.productId]); setContextMenu({ productId: product.productId, x: event.clientX, y: event.clientY }); }} /></div>)}
+              {products.map((product) => <div key={product.productId} onFocus={() => setActiveProductId(product.productId)}><DraggableProduct product={product} scale={instance.transformState.scale} selected={selectedIds.includes(product.productId)} onSelect={(shift) => setSelectedIds((ids) => shift ? (ids.includes(product.productId) ? ids.filter((id) => id !== product.productId) : [...ids, product.productId]) : [product.productId])} onContextMenu={(event) => { event.preventDefault(); const nextSelectedIds = selectedIds.includes(product.productId) ? selectedIds : [product.productId]; setSelectedIds(nextSelectedIds); setContextMenu({ productId: product.productId, x: event.clientX, y: event.clientY, selectedIds: nextSelectedIds }); }} /></div>)}
             </div>
           </TransformComponent>
         </div>
       )}
     </TransformWrapper>
     {contextMenu && <div className="fixed z-50 rounded-md border bg-white py-1 text-sm shadow-lg" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={(event) => event.stopPropagation()}>
-      <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100" disabled={selectedIds.length < 2} onClick={() => { const groupId = crypto.randomUUID(); void setProductLayoutsGroupAction({ branchId, productIds: selectedIds, groupId }).then((result) => { if (result.ok) onProductsChange(products.map((product) => selectedIds.includes(product.productId) ? { ...product, groupId } : product)); }); setContextMenu(null); }}>Group ({selectedIds.length})</button>
+      <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100" disabled={contextMenu.selectedIds.length < 2} onClick={() => { const ids = contextMenu.selectedIds; const groupId = crypto.randomUUID(); void setProductLayoutsGroupAction({ branchId, productIds: ids, groupId }).then((result) => { if (result.ok) onProductsChange(products.map((product) => ids.includes(product.productId) ? { ...product, groupId } : product)); }); setContextMenu(null); }}>Group ({contextMenu.selectedIds.length})</button>
       {products.find((product) => product.productId === contextMenu.productId)?.groupId && <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100" onClick={() => { const group = products.find((product) => product.productId === contextMenu.productId)?.groupId; const ids = products.filter((product) => product.groupId === group).map((product) => product.productId); void setProductLayoutsGroupAction({ branchId, productIds: ids, groupId: null }).then((result) => { if (result.ok) onProductsChange(products.map((product) => ids.includes(product.productId) ? { ...product, groupId: null } : product)); }); setContextMenu(null); }}>Ungroup</button>}
     </div>}
     {dragging && <TrashDropZone />}

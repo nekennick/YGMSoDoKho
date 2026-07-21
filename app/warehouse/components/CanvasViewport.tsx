@@ -46,6 +46,9 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
   const [activeProductId, setActiveProductId] = useState<number | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [contextMenu, setContextMenu] = useState<{ productId: number; x: number; y: number } | null>(null);
+  const [selectionBox, setSelectionBox] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
+  const selectionStart = useRef<{ x: number; y: number } | null>(null);
+  const canvasRef = useRef<HTMLDivElement | null>(null);
   const transformRef = useRef<ReactZoomPanPinchRef | null>(null);
 
   useEffect(() => {
@@ -62,6 +65,33 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [activeProductId, branchId, onProductsChange, products]);
+
+  useEffect(() => {
+    const onMove = (event: PointerEvent) => {
+      if (!selectionStart.current || !canvasRef.current) return;
+      const rect = canvasRef.current.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const y = event.clientY - rect.top;
+      setSelectionBox({ x: Math.min(selectionStart.current.x, x), y: Math.min(selectionStart.current.y, y), width: Math.abs(x - selectionStart.current.x), height: Math.abs(y - selectionStart.current.y) });
+    };
+    const onUp = (event: PointerEvent) => {
+      if (selectionStart.current && canvasRef.current) {
+        const rect = canvasRef.current.getBoundingClientRect();
+        const endX = event.clientX - rect.left;
+        const endY = event.clientY - rect.top;
+        const left = Math.min(selectionStart.current.x, endX);
+        const top = Math.min(selectionStart.current.y, endY);
+        const right = Math.max(selectionStart.current.x, endX);
+        const bottom = Math.max(selectionStart.current.y, endY);
+        const ids = Array.from(canvasRef.current.querySelectorAll<HTMLElement>(".product-chip")).filter((node) => { const item = node.getBoundingClientRect(); const x = item.left - rect.left; const y = item.top - rect.top; return x < right && x + item.width > left && y < bottom && y + item.height > top; }).map((node) => Number(node.parentElement?.dataset.productId)).filter(Number.isFinite);
+        if (ids.length) setSelectedIds(ids);
+      }
+      selectionStart.current = null; setSelectionBox(null);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => { window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp); };
+  }, []);
 
   return (
     <DndContext id="warehouse-canvas" onDragStart={() => setDragging(true)} onDragCancel={() => setDragging(false)} onDragEnd={async (event: DragEndEvent) => {
@@ -102,7 +132,9 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
     >
       {({ resetTransform, instance }) => (
         <div
+          ref={canvasRef}
           className={`relative h-full overflow-hidden bg-slate-50 ${spacePressed ? "cursor-grab" : "cursor-default"}`}
+          onPointerDown={(event) => { const target = event.target instanceof HTMLElement ? event.target : null; if (event.button === 0 && !target?.closest(".product-chip")) { const rect = event.currentTarget.getBoundingClientRect(); selectionStart.current = { x: event.clientX - rect.left, y: event.clientY - rect.top }; } }}
           onMouseDown={(event) => {
             if (event.button !== 1) return;
             event.preventDefault();
@@ -120,6 +152,7 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
           }}
           onClick={() => { setContextMenu(null); }}
         >
+          {selectionBox && <div className="pointer-events-none absolute z-20 border border-blue-500 bg-blue-400/20" style={{ left: selectionBox.x, top: selectionBox.y, width: selectionBox.width, height: selectionBox.height }} />}
           <div className="absolute left-3 top-3 z-10 rounded-md border bg-white/90 px-2 py-1 text-xs text-slate-600 shadow-sm">
             {Math.round(instance.transformState.scale * 100)}%
             <button className="ml-2 underline" onClick={() => resetTransform()}>Reset</button>

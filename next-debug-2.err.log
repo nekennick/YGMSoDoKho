@@ -1,0 +1,5 @@
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: EPERM: operation not permitted, rename 'D:\github\YagamiSoDoKho\.next\cache\webpack\client-development\6.pack.gz_' -> 'D:\github\YagamiSoDoKho\.next\cache\webpack\client-development\6.pack.gz'
+Failed to load warehouse data {
+  name: 'KiotVietUnavailableError',
+  message: 'KiotViet API request failed'
+}

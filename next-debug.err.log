@@ -1,0 +1,8 @@
+Failed to load warehouse data {
+  name: 'PrismaClientKnownRequestError',
+  message: '\n' +
+    'Invalid `prisma.productLayout.findMany()` invocation:\n' +
+    '\n' +
+    '\n' +
+    'The table `public.ProductLayout` does not exist in the current database.'
+}

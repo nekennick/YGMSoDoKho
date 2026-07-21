@@ -46,7 +46,7 @@ export function AddProductDialog({
           <div className="flex items-center justify-between"><h2 className="font-semibold">Thêm sản phẩm</h2><button onClick={() => setOpen(false)}>×</button></div>
           <input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Tìm theo tên sản phẩm..." className="mt-3 w-full rounded-md border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-300" />
           <div className="mt-3 max-h-72 overflow-auto">
-            {filtered.map((product) => <button key={product.productId} disabled={pending} onClick={() => add(product)} className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-slate-100 disabled:opacity-50"><span>📦</span>{product.name}</button>)}
+            {filtered.map((product) => <button key={product.productId} disabled={pending} onClick={() => add(product)} className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-slate-100 disabled:opacity-50"><span>📦</span><span className="flex-1">{product.name}</span><span className="text-xs text-slate-500">SL: {product.quantity}</span></button>)}
             {filtered.length === 0 && <p className="p-3 text-sm text-slate-500">Không còn sản phẩm phù hợp.</p>}
           </div>
         </div>

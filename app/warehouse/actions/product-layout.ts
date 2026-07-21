@@ -3,6 +3,7 @@
 import { z } from "zod";
 import { updateProductPosition } from "@/lib/product-layout/repository";
 import { createProductLayout } from "@/lib/product-layout/repository";
+import { deleteProductLayout } from "@/lib/product-layout/repository";
 import { getProductCatalogService } from "@/lib/warehouse/catalog-service";
 
 const updatePositionSchema = z.object({
@@ -55,5 +56,18 @@ export async function updateProductPositionAction(input: unknown): Promise<Produ
       ? "Sản phẩm không còn trên canvas."
       : "Không thể lưu vị trí sản phẩm.";
     return { ok: false, error: { code: message.includes("không còn") ? "NOT_FOUND" : "PERSISTENCE_ERROR", message } };
+  }
+}
+
+const deleteLayoutSchema = z.object({ productId: z.number().int().positive(), branchId: z.number().int().positive() });
+
+export async function deleteProductLayoutAction(input: unknown): Promise<{ ok: true } | { ok: false; message: string }> {
+  const parsed = deleteLayoutSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, message: "Sản phẩm không hợp lệ." };
+  try {
+    await deleteProductLayout(parsed.data.productId, parsed.data.branchId);
+    return { ok: true };
+  } catch {
+    return { ok: false, message: "Không thể xóa sản phẩm khỏi canvas." };
   }
 }

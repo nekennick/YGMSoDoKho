@@ -8,12 +8,16 @@ export function AddProductDialog({
   products,
   onAdded,
   branchId,
+  open: openProp,
+  onOpenChange,
 }: {
   products: ProductOption[];
   onAdded: (product: ProductOption & { x: number; y: number; color: string }) => void;
   branchId: number;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [pending, startTransition] = useTransition();
   const filtered = useMemo(() => products.filter((product) => product.name.toLocaleLowerCase("vi").includes(query.trim().toLocaleLowerCase("vi"))), [products, query]);
@@ -30,9 +34,13 @@ export function AddProductDialog({
     });
   };
 
+  const open = openProp ?? internalOpen;
+  const setOpen = (nextOpen: boolean) => {
+    if (openProp === undefined) setInternalOpen(nextOpen);
+    onOpenChange?.(nextOpen);
+  };
   return (
     <div>
-      <button className="rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white" onClick={() => setOpen(true)}>+ Thêm sản phẩm</button>
       {open && <div className="fixed inset-0 z-50 flex items-start justify-center bg-slate-950/20 p-20" onMouseDown={() => setOpen(false)}>
         <div className="w-full max-w-md rounded-xl bg-white p-4 shadow-xl" onMouseDown={(event) => event.stopPropagation()}>
           <div className="flex items-center justify-between"><h2 className="font-semibold">Thêm sản phẩm</h2><button onClick={() => setOpen(false)}>×</button></div>

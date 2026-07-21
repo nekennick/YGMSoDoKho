@@ -63,9 +63,10 @@ export class KiotVietProductCatalogService implements ProductCatalogService {
 
   private async loadAllPages(): Promise<ExternalProduct[]> {
     const productsById = new Map<number, ExternalProduct>();
+    let currentItem = 0;
     for (let page = 1; page <= this.maxPages; page += 1) {
       const response = await this.client.get(
-        `${this.productsPath}?page=${page}&pageSize=${this.pageSize}`,
+        `${this.productsPath}?currentItem=${currentItem}&pageSize=${this.pageSize}`,
         productPageSchema,
       );
       const items = pageItems(response);
@@ -76,6 +77,7 @@ export class KiotVietProductCatalogService implements ProductCatalogService {
       const total = pageTotal(response);
       if (items.length === 0 || (total !== undefined && productsById.size >= total) || items.length < this.pageSize) break;
       if (page === this.maxPages) throw new Error("KiotViet pagination exceeded the safety limit");
+      currentItem += items.length;
     }
     const products = [...productsById.values()];
     this.cachedCatalog = { products, expiresAt: this.now() + this.cacheTtlMs };

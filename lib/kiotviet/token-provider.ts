@@ -17,6 +17,7 @@ type CachedToken = {
 export class KiotVietTokenProvider {
   private cachedToken: CachedToken | null = null;
   private refreshPromise: Promise<string> | null = null;
+  private readonly timeoutMs = 30_000;
 
   public constructor(
     private readonly config: KiotVietConfig,
@@ -45,7 +46,10 @@ export class KiotVietTokenProvider {
   private async refreshToken(): Promise<string> {
     let response: Response;
     try {
-      response = await this.fetchFunction(this.config.tokenUrl, {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+      try {
+        response = await this.fetchFunction(this.config.tokenUrl, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
         body: new URLSearchParams({
@@ -53,7 +57,11 @@ export class KiotVietTokenProvider {
           client_id: this.config.clientId,
           client_secret: this.config.clientSecret,
         }),
-      });
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeout);
+      }
     } catch (error) {
       throw new KiotVietUnavailableError("KiotViet token endpoint is unavailable", { cause: error });
     }

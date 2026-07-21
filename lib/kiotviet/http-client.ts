@@ -15,7 +15,7 @@ export class KiotVietHttpClient {
     private readonly config: KiotVietConfig,
     private readonly tokenProvider: KiotVietTokenProvider,
     private readonly fetchFunction: FetchFunction = fetch,
-    private readonly timeoutMs = 15_000,
+    private readonly timeoutMs = 30_000,
     private readonly maxRetries = 2,
   ) {}
 

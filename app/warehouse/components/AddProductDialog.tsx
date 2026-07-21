@@ -8,12 +8,14 @@ export function AddProductDialog({
   products,
   onAdded,
   branchId,
+  getPosition,
   open: openProp,
   onOpenChange,
 }: {
   products: ProductOption[];
   onAdded: (product: ProductOption & { x: number; y: number; color: string }) => void;
   branchId: number;
+  getPosition?: () => { x: number; y: number };
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
 }) {
@@ -24,7 +26,7 @@ export function AddProductDialog({
 
   const add = (product: ProductOption) => {
     startTransition(async () => {
-      const position = { x: 400, y: 250 };
+      const position = getPosition?.() ?? { x: 400, y: 250 };
       const result = await createProductLayoutAction({ productId: product.productId, branchId, ...position });
       if (result.ok) {
         onAdded({ ...product, ...result.data });

@@ -14,14 +14,14 @@ function TrashDropZone() {
   return <div ref={setNodeRef} className={`touch-trash-zone fixed bottom-5 left-1/2 z-30 -translate-x-1/2 rounded-full px-6 py-3 text-sm font-semibold shadow-lg transition ${isOver ? "bg-red-600 text-white scale-110" : "bg-slate-900/90 text-white"}`}>🗑️ {isOver ? "Thả để xóa" : "Kéo vào đây để xóa"}</div>;
 }
 
-function DraggableProduct({ product, scale, selected, groupDelta, dragDisabled, onSelect, onContextMenu, onMultiSelectStart, onLongPress }: { product: CanvasProduct; scale: number; selected: boolean; groupDelta: { x: number; y: number } | null; dragDisabled: boolean; onSelect: (shift: boolean) => void; onContextMenu: (event: React.MouseEvent) => void; onMultiSelectStart: () => void; onLongPress: (x: number, y: number) => void }) {
+function DraggableProduct({ product, scale, selected, highlighted, groupDelta, dragDisabled, multiTouchGesture, onSelect, onContextMenu, onMultiSelectStart, onLongPress }: { product: CanvasProduct; scale: number; selected: boolean; highlighted: boolean; groupDelta: { x: number; y: number } | null; dragDisabled: boolean; multiTouchGesture: boolean; onSelect: (shift: boolean) => void; onContextMenu: (event: React.MouseEvent) => void; onMultiSelectStart: () => void; onLongPress: (x: number, y: number) => void }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: product.productId, disabled: dragDisabled });
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const multiSelectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pointerStart = useRef<{ x: number; y: number } | null>(null);
   const longPressTriggered = useRef(false);
-  const deltaX = isDragging ? (transform?.x ?? 0) / scale : (groupDelta?.x ?? 0);
-  const deltaY = isDragging ? (transform?.y ?? 0) / scale : (groupDelta?.y ?? 0);
+  const deltaX = isDragging && !multiTouchGesture ? (transform?.x ?? 0) / scale : (groupDelta?.x ?? 0);
+  const deltaY = isDragging && !multiTouchGesture ? (transform?.y ?? 0) / scale : (groupDelta?.y ?? 0);
   const clearLongPress = () => {
     if (longPressTimer.current) clearTimeout(longPressTimer.current);
     if (multiSelectTimer.current) clearTimeout(multiSelectTimer.current);
@@ -29,9 +29,9 @@ function DraggableProduct({ product, scale, selected, groupDelta, dragDisabled, 
     multiSelectTimer.current = null;
   };
   useEffect(() => {
-    if (isDragging) clearLongPress();
+    if (isDragging || multiTouchGesture) clearLongPress();
     return clearLongPress;
-  }, [isDragging]);
+  }, [isDragging, multiTouchGesture]);
   return (
     <div
       ref={setNodeRef}
@@ -69,22 +69,24 @@ function DraggableProduct({ product, scale, selected, groupDelta, dragDisabled, 
       }}
       onContextMenu={onContextMenu}
       data-product-id={product.productId}
-      className={`product-chip absolute min-w-48 touch-none rounded-lg border px-3 py-2 text-sm font-medium text-white shadow-sm transition-[filter,box-shadow] ${selected ? "border-yellow-300 brightness-125 saturate-150 ring-4 ring-yellow-300/80 ring-offset-2 ring-offset-slate-50" : "border-slate-200"}`}
+      className={`product-chip absolute flex h-10 w-64 min-w-64 max-w-64 touch-none items-center overflow-hidden rounded-lg border px-3 text-sm font-medium text-white shadow-sm transition-[filter,box-shadow] ${selected ? "border-yellow-300 brightness-125 saturate-150 ring-4 ring-yellow-300/80 ring-offset-2 ring-offset-slate-50" : highlighted ? "border-sky-300 ring-4 ring-sky-400/80 ring-offset-2 ring-offset-slate-50" : "border-slate-200"}`}
       style={{
         left: product.x,
         top: product.y,
         backgroundColor: product.color,
         transform: `translate3d(${deltaX}px, ${deltaY}px, 0)`,
-        zIndex: isDragging ? 20 : 1,
-        opacity: isDragging ? 0.8 : 1,
+        zIndex: isDragging && !multiTouchGesture ? 20 : 1,
+        opacity: isDragging && !multiTouchGesture ? 0.8 : 1,
       }}
     >
-      <span aria-hidden="true">📦 </span>{product.name}<span className="ml-2 text-xs font-normal text-white/80">({product.quantity})</span>
+      <span aria-hidden="true" className="mr-1.5 shrink-0">📦</span>
+      <span className="min-w-0 flex-1 truncate" title={product.name}>{product.name}</span>
+      <span className="ml-2 shrink-0 text-xs font-normal text-white/80">({product.quantity})</span>
     </div>
   );
 }
 
-export function CanvasViewport({ products, branchId, onProductsChange, onRequestAdd }: { products: CanvasProduct[]; branchId: number; onProductsChange: (products: CanvasProduct[]) => void; onRequestAdd: () => void }) {
+export function CanvasViewport({ products, branchId, onProductsChange, onRequestAdd, onRegisterCenterPosition, focusProductId, searchQuery }: { products: CanvasProduct[]; branchId: number; onProductsChange: (products: CanvasProduct[]) => void; onRequestAdd: () => void; onRegisterCenterPosition?: (getter: (() => { x: number; y: number }) | null) => void; focusProductId?: number | null; searchQuery?: string }) {
   const { spacePressed } = useKeyboard();
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
   const [dragging, setDragging] = useState(false);
@@ -95,16 +97,134 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
   const [isTouchDevice, setIsTouchDevice] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ productId: number; x: number; y: number; selectedIds: number[] } | null>(null);
   const [mobileMultiSelect, setMobileMultiSelect] = useState(false);
+  const [highlightedProductId, setHighlightedProductId] = useState<number | null>(null);
+  const [multiTouchGesture, setMultiTouchGesture] = useState(false);
   const [selectionBox, setSelectionBox] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
   const selectionStart = useRef<{ x: number; y: number } | null>(null);
   const selectionMoved = useRef(false);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const transformRef = useRef<ReactZoomPanPinchRef | null>(null);
+  const productsRef = useRef(products);
+  productsRef.current = products;
+
+  useEffect(() => {
+    if (!onRegisterCenterPosition) return;
+    onRegisterCenterPosition(() => {
+      const viewport = canvasRef.current?.getBoundingClientRect();
+      const transform = transformRef.current?.instance.transformState;
+      if (!viewport || !transform || !transform.scale) return { x: 400, y: 250 };
+      const anchorProduct = productsRef.current[0];
+      const anchorNode = anchorProduct && canvasRef.current?.querySelector<HTMLElement>(`.product-chip[data-product-id="${anchorProduct.productId}"]`);
+      if (anchorProduct && anchorNode) {
+        const anchorRect = anchorNode.getBoundingClientRect();
+        const anchorWidth = anchorNode.offsetWidth || 256;
+        const anchorHeight = anchorNode.offsetHeight || 40;
+        const scaleX = anchorRect.width / anchorWidth;
+        const scaleY = anchorRect.height / anchorHeight;
+        const targetScreenX = window.innerWidth / 2;
+        const targetScreenY = window.innerHeight / 2;
+        const worldOriginX = anchorRect.left - anchorProduct.x * scaleX;
+        const worldOriginY = anchorRect.top - anchorProduct.y * scaleY;
+        return {
+          x: (targetScreenX - worldOriginX) / scaleX - anchorWidth / 2,
+          y: (targetScreenY - worldOriginY) / scaleY - anchorHeight / 2,
+        };
+      }
+      return {
+        x: (window.innerWidth / 2 - viewport.left - transform.positionX) / transform.scale - 128,
+        y: (window.innerHeight / 2 - viewport.top - transform.positionY) / transform.scale - 20,
+      };
+    });
+    return () => onRegisterCenterPosition(null);
+  }, [onRegisterCenterPosition]);
+  const activeTouchPointers = useRef(new Set<number>());
+  const multiTouchGestureRef = useRef(false);
   const trashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clearTrashTimer = () => {
     if (trashTimer.current) clearTimeout(trashTimer.current);
     trashTimer.current = null;
   };
+
+  const centerAll = () => {
+    if (!products.length || !canvasRef.current || !transformRef.current) return;
+    const viewport = canvasRef.current.getBoundingClientRect();
+    const chipNodes = new Map<number, HTMLElement>();
+    canvasRef.current.querySelectorAll<HTMLElement>(".product-chip").forEach((node) => {
+      const id = Number(node.dataset.productId);
+      if (Number.isFinite(id)) chipNodes.set(id, node);
+    });
+    const bounds = products.reduce((result, product) => {
+      const width = chipNodes.get(product.productId)?.offsetWidth ?? 192;
+      const height = chipNodes.get(product.productId)?.offsetHeight ?? 40;
+      return {
+        minX: Math.min(result.minX, product.x),
+        minY: Math.min(result.minY, product.y),
+        maxX: Math.max(result.maxX, product.x + width),
+        maxY: Math.max(result.maxY, product.y + height),
+      };
+    }, { minX: Number.POSITIVE_INFINITY, minY: Number.POSITIVE_INFINITY, maxX: Number.NEGATIVE_INFINITY, maxY: Number.NEGATIVE_INFINITY });
+    const padding = 80;
+    const contentWidth = Math.max(bounds.maxX - bounds.minX + padding, 1);
+    const contentHeight = Math.max(bounds.maxY - bounds.minY + padding, 1);
+    const scale = Math.min(5, Math.max(0.2, Math.min(viewport.width / contentWidth, viewport.height / contentHeight)));
+    const currentTransform = transformRef.current.instance.transformState;
+    transformRef.current.setTransform(currentTransform.positionX, currentTransform.positionY, scale, 0);
+    window.requestAnimationFrame(() => {
+      if (!canvasRef.current || !transformRef.current) return;
+      const visibleNodes = Array.from(canvasRef.current.querySelectorAll<HTMLElement>(".product-chip"));
+      if (!visibleNodes.length) return;
+      const chipBounds = visibleNodes.reduce((result, node) => {
+        const rect = node.getBoundingClientRect();
+        return {
+          left: Math.min(result.left, rect.left),
+          top: Math.min(result.top, rect.top),
+          right: Math.max(result.right, rect.right),
+          bottom: Math.max(result.bottom, rect.bottom),
+        };
+      }, { left: Number.POSITIVE_INFINITY, top: Number.POSITIVE_INFINITY, right: Number.NEGATIVE_INFINITY, bottom: Number.NEGATIVE_INFINITY });
+      const deltaX = viewport.left + viewport.width / 2 - (chipBounds.left + chipBounds.right) / 2;
+      const deltaY = viewport.top + viewport.height / 2 - (chipBounds.top + chipBounds.bottom) / 2;
+      const latestTransform = transformRef.current.instance.transformState;
+      transformRef.current.setTransform(latestTransform.positionX + deltaX, latestTransform.positionY + deltaY, scale, 300);
+    });
+  };
+
+  useEffect(() => {
+    const query = searchQuery?.trim().toLocaleLowerCase("vi");
+    if (!query) {
+      setHighlightedProductId(null);
+      return;
+    }
+    const product = productsRef.current.find((item) => item.name.toLocaleLowerCase("vi").includes(query));
+    if (!product || !canvasRef.current || !transformRef.current) {
+      setHighlightedProductId(null);
+      return;
+    }
+    const viewport = canvasRef.current.getBoundingClientRect();
+    const node = canvasRef.current.querySelector<HTMLElement>(`.product-chip[data-product-id="${product.productId}"]`);
+    const width = node?.offsetWidth ?? 192;
+    const height = node?.offsetHeight ?? 40;
+    const scale = transformRef.current.instance.transformState.scale;
+    transformRef.current.setTransform(viewport.width / 2 - (product.x + width / 2) * scale, viewport.height / 2 - (product.y + height / 2) * scale, scale, 300);
+    setHighlightedProductId(product.productId);
+    const timeout = window.setTimeout(() => setHighlightedProductId(null), 2000);
+    return () => window.clearTimeout(timeout);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    if (focusProductId === null || focusProductId === undefined) return;
+    const frame = window.requestAnimationFrame(() => {
+      if (!canvasRef.current || !transformRef.current) return;
+      const node = canvasRef.current.querySelector<HTMLElement>(`.product-chip[data-product-id="${focusProductId}"]`);
+      if (!node) return;
+      const chip = node.getBoundingClientRect();
+      const transform = transformRef.current.instance.transformState;
+      const deltaX = window.innerWidth / 2 - (chip.left + chip.width / 2);
+      const deltaY = window.innerHeight / 2 - (chip.top + chip.height / 2);
+      transformRef.current.setTransform(transform.positionX + deltaX, transform.positionY + deltaY, transform.scale, 300);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [focusProductId]);
 
   useEffect(() => {
     const media = window.matchMedia("(pointer: coarse)");
@@ -245,11 +365,12 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
   }, []);
 
   return (
-    <DndContext id="warehouse-canvas" sensors={sensors} onDragStart={(event: DragStartEvent) => { if (mobileMultiSelect) return; const productId = Number(event.active.id); const ids = selectedIds.includes(productId) ? selectedIds : [productId]; setSelectedIds(ids); setDragPreview({ ids, x: 0, y: 0 }); setDragging(true); setTrashVisible(!isTouchDevice); clearTrashTimer(); if (isTouchDevice) trashTimer.current = setTimeout(() => setTrashVisible(true), 100); }} onDragMove={(event: DragMoveEvent) => { const scale = transformRef.current?.instance.transformState.scale ?? 1; setDragPreview((preview) => preview ? { ...preview, x: event.delta.x / scale, y: event.delta.y / scale } : null); }} onDragCancel={() => { setDragging(false); setTrashVisible(false); clearTrashTimer(); setDragPreview(null); }} onDragEnd={async (event: DragEndEvent) => {
+    <DndContext id="warehouse-canvas" sensors={sensors} onDragStart={(event: DragStartEvent) => { if (mobileMultiSelect || multiTouchGestureRef.current) return; const productId = Number(event.active.id); const ids = selectedIds.includes(productId) ? selectedIds : [productId]; setSelectedIds(ids); setDragPreview({ ids, x: 0, y: 0 }); setDragging(true); setTrashVisible(!isTouchDevice); clearTrashTimer(); if (isTouchDevice) trashTimer.current = setTimeout(() => setTrashVisible(true), 100); }} onDragMove={(event: DragMoveEvent) => { if (multiTouchGestureRef.current) return; const scale = transformRef.current?.instance.transformState.scale ?? 1; setDragPreview((preview) => preview ? { ...preview, x: event.delta.x / scale, y: event.delta.y / scale } : null); }} onDragCancel={() => { setDragging(false); setTrashVisible(false); clearTrashTimer(); setDragPreview(null); }} onDragEnd={async (event: DragEndEvent) => {
       setDragging(false);
       setTrashVisible(false);
       clearTrashTimer();
       setDragPreview(null);
+      if (multiTouchGestureRef.current) return;
       if (!event.active || (event.delta.x === 0 && event.delta.y === 0)) return;
       const productId = Number(event.active.id);
       const movingIds = selectedIds.includes(productId) ? selectedIds : [productId];
@@ -278,7 +399,7 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
       maxScale={5}
       initialScale={1}
       centerOnInit
-      centerZoomedOut
+      centerZoomedOut={false}
       limitToBounds={false}
       wheel={{ disabled: false, activationKeys: ["Control"], step: 0.1, smoothStep: 0.01 }}
       panning={{ disabled: !spacePressed, excluded: ["product-chip"] }}
@@ -288,6 +409,32 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
         <div
           ref={canvasRef}
           className={`relative h-full overflow-hidden bg-slate-50 ${spacePressed ? "cursor-grab" : "cursor-default"}`}
+          onPointerDownCapture={(event) => {
+            if (event.pointerType !== "touch") return;
+            activeTouchPointers.current.add(event.pointerId);
+            if (activeTouchPointers.current.size >= 2) {
+              multiTouchGestureRef.current = true;
+              setMultiTouchGesture(true);
+            }
+          }}
+          onPointerUpCapture={(event) => {
+            if (event.pointerType !== "touch") return;
+            activeTouchPointers.current.delete(event.pointerId);
+            if (activeTouchPointers.current.size === 0) {
+              window.setTimeout(() => {
+                multiTouchGestureRef.current = false;
+                setMultiTouchGesture(false);
+              }, 120);
+            }
+          }}
+          onPointerCancelCapture={(event) => {
+            if (event.pointerType !== "touch") return;
+            activeTouchPointers.current.delete(event.pointerId);
+            if (activeTouchPointers.current.size === 0) {
+              multiTouchGestureRef.current = false;
+              setMultiTouchGesture(false);
+            }
+          }}
           onPointerDown={(event) => { const target = event.target instanceof HTMLElement ? event.target : null; if (!isTouchDevice && event.button === 0 && !target?.closest(".product-chip")) { const rect = event.currentTarget.getBoundingClientRect(); selectionStart.current = { x: event.clientX - rect.left, y: event.clientY - rect.top }; selectionMoved.current = false; } }}
           onMouseDown={(event) => {
             if (event.button !== 1) return;
@@ -310,6 +457,7 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
           <div className="absolute left-3 top-3 z-10 rounded-md border bg-white/90 px-2 py-1 text-xs text-slate-600 shadow-sm">
             {Math.round(instance.transformState.scale * 100)}%
             <button className="ml-2 underline" onClick={() => resetTransform()}>Reset</button>
+            <button className="ml-2 underline" onClick={centerAll} disabled={!products.length}>Center All</button>
           </div>
           <TransformComponent wrapperClass="!h-full !w-full" contentClass="!h-full !w-full">
             <div className="relative h-[10000px] w-[10000px]">
@@ -319,8 +467,10 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
                     product={product}
                     scale={instance.transformState.scale}
                     selected={selectedIds.includes(product.productId)}
+                    highlighted={highlightedProductId === product.productId}
                     groupDelta={dragPreview?.ids.includes(product.productId) ? { x: dragPreview.x, y: dragPreview.y } : null}
                     dragDisabled={mobileMultiSelect}
+                    multiTouchGesture={multiTouchGesture}
                     onSelect={(shift) => {
                       setContextMenu(null);
                       setActiveProductId(product.productId);

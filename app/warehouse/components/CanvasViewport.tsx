@@ -14,11 +14,10 @@ function TrashDropZone() {
   return <div ref={setNodeRef} className={`touch-trash-zone fixed bottom-5 left-1/2 z-30 -translate-x-1/2 rounded-full px-6 py-3 text-sm font-semibold shadow-lg transition ${isOver ? "bg-red-600 text-white scale-110" : "bg-slate-900/90 text-white"}`}>🗑️ {isOver ? "Thả để xóa" : "Kéo vào đây để xóa"}</div>;
 }
 
-function DraggableProduct({ product, scale, selected, groupDelta, onSelect, onContextMenu, onMultiSelectStart, onLongPress, onDeleteReady }: { product: CanvasProduct; scale: number; selected: boolean; groupDelta: { x: number; y: number } | null; onSelect: (event: { shiftKey: boolean; touch?: boolean }) => void; onContextMenu: (event: React.MouseEvent) => void; onMultiSelectStart: () => void; onLongPress: (x: number, y: number) => void; onDeleteReady: () => void }) {
+function DraggableProduct({ product, scale, selected, groupDelta, onSelect, onContextMenu, onMultiSelectStart, onLongPress }: { product: CanvasProduct; scale: number; selected: boolean; groupDelta: { x: number; y: number } | null; onSelect: (event: { shiftKey: boolean; touch?: boolean }) => void; onContextMenu: (event: React.MouseEvent) => void; onMultiSelectStart: () => void; onLongPress: (x: number, y: number) => void }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: product.productId });
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const multiSelectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const deleteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pointerStart = useRef<{ x: number; y: number } | null>(null);
   const longPressTriggered = useRef(false);
   const lastPointerWasTouch = useRef(false);
@@ -27,10 +26,8 @@ function DraggableProduct({ product, scale, selected, groupDelta, onSelect, onCo
   const clearLongPress = () => {
     if (longPressTimer.current) clearTimeout(longPressTimer.current);
     if (multiSelectTimer.current) clearTimeout(multiSelectTimer.current);
-    if (deleteTimer.current) clearTimeout(deleteTimer.current);
     longPressTimer.current = null;
     multiSelectTimer.current = null;
-    deleteTimer.current = null;
   };
   return (
     <div
@@ -51,7 +48,6 @@ function DraggableProduct({ product, scale, selected, groupDelta, onSelect, onCo
         longPressTimer.current = setTimeout(() => {
           onLongPress(event.clientX, event.clientY);
         }, 500);
-        deleteTimer.current = setTimeout(onDeleteReady, 700);
       }}
       onPointerMove={(event) => {
         if (!pointerStart.current) return;
@@ -96,17 +92,23 @@ function DraggableProduct({ product, scale, selected, groupDelta, onSelect, onCo
 export function CanvasViewport({ products, branchId, onProductsChange, onRequestAdd }: { products: CanvasProduct[]; branchId: number; onProductsChange: (products: CanvasProduct[]) => void; onRequestAdd: () => void }) {
   const { spacePressed } = useKeyboard();
   const [dragging, setDragging] = useState(false);
+  const [trashVisible, setTrashVisible] = useState(false);
   const [activeProductId, setActiveProductId] = useState<number | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [dragPreview, setDragPreview] = useState<{ ids: number[]; x: number; y: number } | null>(null);
   const [isTouchDevice, setIsTouchDevice] = useState(false);
-  const [contextMenu, setContextMenu] = useState<{ productId: number; x: number; y: number; selectedIds: number[]; showDelete: boolean } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ productId: number; x: number; y: number; selectedIds: number[] } | null>(null);
   const [mobileMultiSelect, setMobileMultiSelect] = useState(false);
   const [selectionBox, setSelectionBox] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
   const selectionStart = useRef<{ x: number; y: number } | null>(null);
   const selectionMoved = useRef(false);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const transformRef = useRef<ReactZoomPanPinchRef | null>(null);
+  const trashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearTrashTimer = () => {
+    if (trashTimer.current) clearTimeout(trashTimer.current);
+    trashTimer.current = null;
+  };
 
   useEffect(() => {
     const media = window.matchMedia("(pointer: coarse)");
@@ -247,8 +249,10 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
   }, []);
 
   return (
-    <DndContext id="warehouse-canvas" onDragStart={(event: DragStartEvent) => { const productId = Number(event.active.id); const ids = selectedIds.includes(productId) ? selectedIds : [productId]; setSelectedIds(ids); setDragPreview({ ids, x: 0, y: 0 }); setDragging(true); }} onDragMove={(event: DragMoveEvent) => { const scale = transformRef.current?.instance.transformState.scale ?? 1; setDragPreview((preview) => preview ? { ...preview, x: event.delta.x / scale, y: event.delta.y / scale } : null); }} onDragCancel={() => { setDragging(false); setDragPreview(null); }} onDragEnd={async (event: DragEndEvent) => {
+    <DndContext id="warehouse-canvas" onDragStart={(event: DragStartEvent) => { const productId = Number(event.active.id); const ids = selectedIds.includes(productId) ? selectedIds : [productId]; setSelectedIds(ids); setDragPreview({ ids, x: 0, y: 0 }); setDragging(true); setTrashVisible(!isTouchDevice); clearTrashTimer(); if (isTouchDevice) trashTimer.current = setTimeout(() => setTrashVisible(true), 700); }} onDragMove={(event: DragMoveEvent) => { const scale = transformRef.current?.instance.transformState.scale ?? 1; setDragPreview((preview) => preview ? { ...preview, x: event.delta.x / scale, y: event.delta.y / scale } : null); }} onDragCancel={() => { setDragging(false); setTrashVisible(false); clearTrashTimer(); setDragPreview(null); }} onDragEnd={async (event: DragEndEvent) => {
       setDragging(false);
+      setTrashVisible(false);
+      clearTrashTimer();
       setDragPreview(null);
       if (!event.active || (event.delta.x === 0 && event.delta.y === 0)) return;
       const productId = Number(event.active.id);
@@ -313,7 +317,7 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
           </div>
           <TransformComponent wrapperClass="!h-full !w-full" contentClass="!h-full !w-full">
             <div className="relative h-[10000px] w-[10000px]">
-              {products.map((product) => <div key={product.productId} onFocus={() => setActiveProductId(product.productId)}><DraggableProduct product={product} scale={instance.transformState.scale} selected={selectedIds.includes(product.productId)} groupDelta={dragPreview?.ids.includes(product.productId) ? { x: dragPreview.x, y: dragPreview.y } : null} onSelect={(event) => { if (event.touch) { setContextMenu(null); if (mobileMultiSelect) setSelectedIds((ids) => Array.from(new Set([...ids, product.productId]))); else setSelectedIds([product.productId]); return; } setSelectedIds((ids) => event.shiftKey ? (ids.includes(product.productId) ? ids.filter((id) => id !== product.productId) : [...ids, product.productId]) : [product.productId]); }} onMultiSelectStart={() => { setMobileMultiSelect(true); setSelectedIds([product.productId]); }} onLongPress={(x, y) => { const nextSelectedIds = selectedIds.includes(product.productId) ? selectedIds : [product.productId]; setSelectedIds(nextSelectedIds); setContextMenu({ productId: product.productId, x, y, selectedIds: nextSelectedIds, showDelete: false }); }} onDeleteReady={() => setContextMenu((menu) => menu ? { ...menu, showDelete: true } : menu)} onContextMenu={(event) => { event.preventDefault(); const nextSelectedIds = selectedIds.includes(product.productId) ? selectedIds : [product.productId]; setSelectedIds(nextSelectedIds); setContextMenu({ productId: product.productId, x: event.clientX, y: event.clientY, selectedIds: nextSelectedIds, showDelete: !isTouchDevice }); }} /></div>)}
+              {products.map((product) => <div key={product.productId} onFocus={() => setActiveProductId(product.productId)}><DraggableProduct product={product} scale={instance.transformState.scale} selected={selectedIds.includes(product.productId)} groupDelta={dragPreview?.ids.includes(product.productId) ? { x: dragPreview.x, y: dragPreview.y } : null} onSelect={(event) => { if (event.touch) { setContextMenu(null); if (mobileMultiSelect) setSelectedIds((ids) => Array.from(new Set([...ids, product.productId]))); else setSelectedIds([product.productId]); return; } setSelectedIds((ids) => event.shiftKey ? (ids.includes(product.productId) ? ids.filter((id) => id !== product.productId) : [...ids, product.productId]) : [product.productId]); }} onMultiSelectStart={() => { setMobileMultiSelect(true); setSelectedIds([product.productId]); }} onLongPress={(x, y) => { const nextSelectedIds = selectedIds.includes(product.productId) ? selectedIds : [product.productId]; setSelectedIds(nextSelectedIds); setContextMenu({ productId: product.productId, x, y, selectedIds: nextSelectedIds }); }} onContextMenu={(event) => { event.preventDefault(); const nextSelectedIds = selectedIds.includes(product.productId) ? selectedIds : [product.productId]; setSelectedIds(nextSelectedIds); setContextMenu({ productId: product.productId, x: event.clientX, y: event.clientY, selectedIds: nextSelectedIds }); }} /></div>)}
             </div>
           </TransformComponent>
         </div>
@@ -321,7 +325,6 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
     </TransformWrapper>
     {contextMenu && <div className="fixed z-50 rounded-md border bg-white py-1 text-sm shadow-lg" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={(event) => event.stopPropagation()}>
       <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100" disabled={contextMenu.selectedIds.length < 2} onClick={() => { const ids = contextMenu.selectedIds; const groupId = crypto.randomUUID(); void setProductLayoutsGroupAction({ branchId, productIds: ids, groupId }).then((result) => { if (result.ok) onProductsChange(products.map((product) => ids.includes(product.productId) ? { ...product, groupId } : product)); }); setContextMenu(null); }}>Group ({contextMenu.selectedIds.length})</button>
-      {contextMenu.showDelete && <button className="block w-full px-3 py-1.5 text-left text-red-600 hover:bg-red-50" onClick={() => { const ids = contextMenu.selectedIds; void Promise.all(ids.map((productId) => deleteProductLayoutAction({ productId, branchId }))).then((results) => { if (results.every((result) => result.ok)) { onProductsChange(products.filter((product) => !ids.includes(product.productId))); setSelectedIds([]); setActiveProductId(null); setMobileMultiSelect(false); } }); setContextMenu(null); }}>Xóa khỏi sơ đồ</button>}
       <div className="my-1 border-t" />
       <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-400" disabled={contextMenu.selectedIds.length < 2} onClick={() => alignSelected("left")}>Căn trái theo chiều dọc</button>
       <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-400" disabled={contextMenu.selectedIds.length < 2} onClick={() => alignSelected("right")}>Căn phải theo chiều dọc</button>
@@ -329,7 +332,7 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
       <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-400" disabled={contextMenu.selectedIds.length < 2} onClick={distributeSelectedVertically}>Xếp dọc, cách nhau 5px</button>
       {products.find((product) => product.productId === contextMenu.productId)?.groupId && <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100" onClick={() => { const group = products.find((product) => product.productId === contextMenu.productId)?.groupId; const ids = products.filter((product) => product.groupId === group).map((product) => product.productId); void setProductLayoutsGroupAction({ branchId, productIds: ids, groupId: null }).then((result) => { if (result.ok) onProductsChange(products.map((product) => ids.includes(product.productId) ? { ...product, groupId: null } : product)); }); setContextMenu(null); }}>Ungroup</button>}
     </div>}
-    {dragging && <TrashDropZone />}
+    {dragging && trashVisible && <TrashDropZone />}
     </DndContext>
   );
 }

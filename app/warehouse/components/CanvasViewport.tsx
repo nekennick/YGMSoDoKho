@@ -54,6 +54,30 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const transformRef = useRef<ReactZoomPanPinchRef | null>(null);
 
+  const alignSelected = (mode: "left" | "right" | "center") => {
+    if (selectedIds.length < 2) return;
+    const widths = new Map<number, number>();
+    selectedIds.forEach((id) => {
+      const node = canvasRef.current?.querySelector<HTMLElement>(`.product-chip[data-product-id="${id}"]`);
+      widths.set(id, node?.offsetWidth ?? 192);
+    });
+    const selectedProducts = products.filter((product) => selectedIds.includes(product.productId));
+    const left = Math.min(...selectedProducts.map((product) => product.x));
+    const right = Math.max(...selectedProducts.map((product) => product.x + (widths.get(product.productId) ?? 192)));
+    const center = (left + right) / 2;
+    const nextProducts = products.map((product) => {
+      if (!selectedIds.includes(product.productId)) return product;
+      const width = widths.get(product.productId) ?? 192;
+      const x = mode === "left" ? left : mode === "right" ? right - width : center - width / 2;
+      return { ...product, x };
+    });
+    onProductsChange(nextProducts);
+    void updateProductPositionsAction({ branchId, positions: nextProducts.filter((product) => selectedIds.includes(product.productId)).map(({ productId, x, y }) => ({ productId, x, y })) }).then((result) => {
+      if (!result.ok) onProductsChange(products);
+    });
+    setContextMenu(null);
+  };
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.target instanceof HTMLElement && (event.target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(event.target.tagName))) return;
@@ -214,6 +238,10 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
     </TransformWrapper>
     {contextMenu && <div className="fixed z-50 rounded-md border bg-white py-1 text-sm shadow-lg" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={(event) => event.stopPropagation()}>
       <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100" disabled={contextMenu.selectedIds.length < 2} onClick={() => { const ids = contextMenu.selectedIds; const groupId = crypto.randomUUID(); void setProductLayoutsGroupAction({ branchId, productIds: ids, groupId }).then((result) => { if (result.ok) onProductsChange(products.map((product) => ids.includes(product.productId) ? { ...product, groupId } : product)); }); setContextMenu(null); }}>Group ({contextMenu.selectedIds.length})</button>
+      <div className="my-1 border-t" />
+      <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-400" disabled={contextMenu.selectedIds.length < 2} onClick={() => alignSelected("left")}>Căn trái theo chiều dọc</button>
+      <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-400" disabled={contextMenu.selectedIds.length < 2} onClick={() => alignSelected("right")}>Căn phải theo chiều dọc</button>
+      <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-400" disabled={contextMenu.selectedIds.length < 2} onClick={() => alignSelected("center")}>Căn giữa theo chiều dọc</button>
       {products.find((product) => product.productId === contextMenu.productId)?.groupId && <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100" onClick={() => { const group = products.find((product) => product.productId === contextMenu.productId)?.groupId; const ids = products.filter((product) => product.groupId === group).map((product) => product.productId); void setProductLayoutsGroupAction({ branchId, productIds: ids, groupId: null }).then((result) => { if (result.ok) onProductsChange(products.map((product) => ids.includes(product.productId) ? { ...product, groupId: null } : product)); }); setContextMenu(null); }}>Ungroup</button>}
     </div>}
     {dragging && <TrashDropZone />}

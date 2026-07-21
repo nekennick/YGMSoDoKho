@@ -52,15 +52,14 @@ function DraggableProduct({ product, scale, selected, groupDelta, onSelect, onCo
         const start = pointerStart.current;
         pointerStart.current = null;
         clearLongPress();
-        if (!longPressTriggered.current && start && Math.hypot(event.clientX - start.x, event.clientY - start.y) <= 8) {
-          event.preventDefault();
-          onSelect({ shiftKey: false, touch: true });
-        }
+        if (start && Math.hypot(event.clientX - start.x, event.clientY - start.y) > 8) longPressTriggered.current = true;
       }}
       onPointerCancel={() => { pointerStart.current = null; clearLongPress(); }}
       onClick={(event) => {
         if (lastPointerWasTouch.current) {
           lastPointerWasTouch.current = false;
+          if (!longPressTriggered.current) onSelect({ shiftKey: false, touch: true });
+          longPressTriggered.current = false;
           return;
         }
         onSelect(event);

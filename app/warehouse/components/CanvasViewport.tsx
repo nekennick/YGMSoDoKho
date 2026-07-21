@@ -26,12 +26,12 @@ function DraggableProduct({ product, scale }: { product: CanvasProduct; scale: n
         opacity: isDragging ? 0.8 : 1,
       }}
     >
-      <span aria-hidden="true">📦 </span>{product.name}
+      <span aria-hidden="true">📦 </span>{product.name}<span className="ml-2 text-xs font-normal text-white/80">({product.quantity})</span>
     </div>
   );
 }
 
-export function CanvasViewport({ products, onProductsChange }: { products: CanvasProduct[]; onProductsChange: (products: CanvasProduct[]) => void }) {
+export function CanvasViewport({ products, branchId, onProductsChange }: { products: CanvasProduct[]; branchId: number; onProductsChange: (products: CanvasProduct[]) => void }) {
   const { spacePressed } = useKeyboard();
   const transformRef = useRef<ReactZoomPanPinchRef | null>(null);
 
@@ -44,7 +44,7 @@ export function CanvasViewport({ products, onProductsChange }: { products: Canva
       const scale = transformRef.current?.instance.transformState.scale ?? 1;
       const next = { ...previous, x: previous.x + event.delta.x / scale, y: previous.y + event.delta.y / scale };
       onProductsChange(products.map((product) => product.productId === productId ? next : product));
-      const result = await updateProductPositionAction({ productId, x: next.x, y: next.y });
+      const result = await updateProductPositionAction({ productId, branchId, x: next.x, y: next.y });
       if (!result.ok) {
         onProductsChange(products.map((product) => product.productId === productId ? previous : product));
       }

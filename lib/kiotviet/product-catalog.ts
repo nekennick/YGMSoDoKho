@@ -15,8 +15,16 @@ type CachedCatalog = {
   expiresAt: number;
 };
 
-function productFromUnknown(value: unknown): ExternalProduct | null {
-  const result = externalProductSchema.safeParse(value);
+function productFromUnknown(value: unknown, branchId: number): ExternalProduct | null {
+  const raw = z.object({
+    id: z.number().int().positive(),
+    name: z.string().trim().min(1),
+    isActive: z.boolean().default(true),
+    inventories: z.array(z.object({ branchId: z.number().int(), onHand: z.number() }).passthrough()).optional(),
+  }).safeParse(value);
+  if (!raw.success) return null;
+  const inventory = raw.data.inventories?.find((item) => item.branchId === branchId);
+  const result = externalProductSchema.safeParse({ ...raw.data, quantity: inventory?.onHand ?? 0 });
   return result.success ? result.data : null;
 }
 
@@ -36,6 +44,7 @@ export class KiotVietProductCatalogService implements ProductCatalogService {
   public constructor(
     private readonly client: KiotVietHttpClient,
     private readonly productsPath = "/products",
+    private readonly branchId = 385885,
     private readonly pageSize = 100,
     private readonly cacheTtlMs = 5 * 60 * 1000,
     private readonly now: () => number = Date.now,
@@ -66,12 +75,12 @@ export class KiotVietProductCatalogService implements ProductCatalogService {
     let currentItem = 0;
     for (let page = 1; page <= this.maxPages; page += 1) {
       const response = await this.client.get(
-        `${this.productsPath}?currentItem=${currentItem}&pageSize=${this.pageSize}`,
+        `${this.productsPath}?currentItem=${currentItem}&pageSize=${this.pageSize}&includeInventory=true`,
         productPageSchema,
       );
       const items = pageItems(response);
       for (const item of items) {
-        const product = productFromUnknown(item);
+        const product = productFromUnknown(item, this.branchId);
         if (product) productsById.set(product.id, product);
       }
       const total = pageTotal(response);

@@ -4,6 +4,7 @@ export const externalProductSchema = z.object({
   id: z.number().int().positive(),
   name: z.string().trim().min(1),
   isActive: z.boolean().default(true),
+  quantity: z.number().default(0),
 });
 
 export type ExternalProduct = z.infer<typeof externalProductSchema>;

@@ -7,11 +7,13 @@ export type CanvasProduct = {
   x: number;
   y: number;
   color: string;
+  quantity: number;
 };
 
 export type ProductOption = {
   productId: number;
   name: string;
+  quantity: number;
 };
 
 export type WarehouseInitialData = {
@@ -43,9 +45,10 @@ export function mergeCatalogAndLayouts(
         x: layout.x,
         y: layout.y,
         color: layout.color,
+        quantity: product.quantity,
       });
     } else {
-      availableProducts.push({ productId: product.id, name: product.name });
+      availableProducts.push({ productId: product.id, name: product.name, quantity: product.quantity });
     }
   }
 

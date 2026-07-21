@@ -9,10 +9,13 @@ datasource db {
 
 model ProductLayout {
   id        String   @id @default(cuid())
-  productId Int      @unique
+  productId Int
+  branchId  Int
   x         Float
   y         Float
   color     String   @default("#3b82f6")
   updatedAt DateTime @updatedAt
   createdAt DateTime @default(now())
+
+  @@unique([branchId, productId])
 }

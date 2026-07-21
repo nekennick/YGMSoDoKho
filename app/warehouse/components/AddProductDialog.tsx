@@ -7,9 +7,11 @@ import { createProductLayoutAction } from "@/app/warehouse/actions/product-layou
 export function AddProductDialog({
   products,
   onAdded,
+  branchId,
 }: {
   products: ProductOption[];
   onAdded: (product: ProductOption & { x: number; y: number; color: string }) => void;
+  branchId: number;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -19,7 +21,7 @@ export function AddProductDialog({
   const add = (product: ProductOption) => {
     startTransition(async () => {
       const position = { x: 400, y: 250 };
-      const result = await createProductLayoutAction({ productId: product.productId, ...position });
+      const result = await createProductLayoutAction({ productId: product.productId, branchId, ...position });
       if (result.ok) {
         onAdded({ ...product, ...result.data });
         setOpen(false);

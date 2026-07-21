@@ -7,6 +7,7 @@ import { getProductCatalogService } from "@/lib/warehouse/catalog-service";
 
 const updatePositionSchema = z.object({
   productId: z.number().int().positive(),
+  branchId: z.number().int().positive(),
   x: z.number().finite(),
   y: z.number().finite(),
 });
@@ -16,11 +17,12 @@ export type ProductLayoutActionResult =
   | { ok: false; error: { code: "INVALID_INPUT" | "NOT_FOUND" | "PERSISTENCE_ERROR"; message: string } };
 
 export type CreateProductLayoutActionResult =
-  | { ok: true; data: { productId: number; x: number; y: number; color: string } }
+  | { ok: true; data: { productId: number; x: number; y: number; color: string; quantity: number } }
   | { ok: false; error: { code: "INVALID_INPUT" | "NOT_FOUND" | "DUPLICATE" | "PERSISTENCE_ERROR"; message: string } };
 
 const createLayoutSchema = z.object({
   productId: z.number().int().positive(),
+  branchId: z.number().int().positive(),
   x: z.number().finite(),
   y: z.number().finite(),
 });
@@ -29,10 +31,10 @@ export async function createProductLayoutAction(input: unknown): Promise<CreateP
   const parsed = createLayoutSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: { code: "INVALID_INPUT", message: "Sản phẩm không hợp lệ." } };
   try {
-    const product = await getProductCatalogService().getProductById(parsed.data.productId);
+    const product = await getProductCatalogService(parsed.data.branchId).getProductById(parsed.data.productId);
     if (!product) return { ok: false, error: { code: "NOT_FOUND", message: "Không tìm thấy sản phẩm trên KiotViet." } };
     const layout = await createProductLayout(parsed.data);
-    return { ok: true, data: { productId: layout.productId, x: layout.x, y: layout.y, color: layout.color } };
+    return { ok: true, data: { productId: layout.productId, x: layout.x, y: layout.y, color: layout.color, quantity: product.quantity } };
   } catch (error) {
     const duplicate = error instanceof Error && error.message.includes("Unique constraint");
     return { ok: false, error: { code: duplicate ? "DUPLICATE" : "PERSISTENCE_ERROR", message: duplicate ? "Sản phẩm đã có trên canvas." : "Không thể thêm sản phẩm." } };

@@ -6,12 +6,12 @@ export type WarehouseDataResult =
   | { ok: true; data: WarehouseInitialData }
   | { ok: false; message: string };
 
-export async function loadWarehouseInitialData(): Promise<WarehouseDataResult> {
+export async function loadWarehouseInitialData(branchId: number): Promise<WarehouseDataResult> {
   try {
-    const catalogService = getProductCatalogService();
+    const catalogService = getProductCatalogService(branchId);
     const [products, layouts] = await Promise.all([
       catalogService.listProducts(),
-      listProductLayouts(),
+      listProductLayouts(branchId),
     ]);
     return { ok: true, data: mergeCatalogAndLayouts(products, layouts) };
   } catch (error) {

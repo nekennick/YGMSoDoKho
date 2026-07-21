@@ -368,7 +368,7 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
               setMultiTouchGesture(false);
             }
           }}
-          onPointerDown={(event) => { const target = event.target instanceof HTMLElement ? event.target : null; if (!isTouchDevice && event.button === 0 && !target?.closest(".product-chip")) { const rect = event.currentTarget.getBoundingClientRect(); selectionStart.current = { x: event.clientX - rect.left, y: event.clientY - rect.top }; selectionMoved.current = false; } }}
+          onPointerDown={(event) => { const target = event.target instanceof HTMLElement ? event.target : null; if (!isTouchDevice && !spacePressed && event.button === 0 && !target?.closest(".product-chip")) { const rect = event.currentTarget.getBoundingClientRect(); selectionStart.current = { x: event.clientX - rect.left, y: event.clientY - rect.top }; selectionMoved.current = false; } }}
           onMouseDown={(event) => {
             if (event.button !== 1) return;
             event.preventDefault();

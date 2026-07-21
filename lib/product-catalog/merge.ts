@@ -33,6 +33,8 @@ export function mergeCatalogAndLayouts(
     if (knownProductIds.has(product.id)) continue;
     knownProductIds.add(product.id);
 
+    if (!product.isActive) continue;
+
     const layout = layoutByProductId.get(product.id);
     if (layout) {
       canvasProducts.push({

@@ -41,6 +41,13 @@ export async function updateProductPosition(input: UpdateProductPositionInput): 
   return toRecord(layout);
 }
 
+export async function updateProductPositions(inputs: UpdateProductPositionInput[]): Promise<void> {
+  await prisma.$transaction(inputs.map((input) => prisma.productLayout.update({
+    where: { branchId_productId: { branchId: input.branchId, productId: input.productId } },
+    data: { x: input.x, y: input.y },
+  })));
+}
+
 export async function updateProductColor(input: UpdateProductColorInput): Promise<ProductLayoutRecord> {
   const layout = await prisma.productLayout.update({
     where: { branchId_productId: { branchId: input.branchId, productId: input.productId } },
@@ -51,4 +58,8 @@ export async function updateProductColor(input: UpdateProductColorInput): Promis
 
 export async function deleteProductLayout(productId: number, branchId: number): Promise<void> {
   await prisma.productLayout.delete({ where: { branchId_productId: { branchId, productId } } });
+}
+
+export async function setProductLayoutsGroup(productIds: number[], branchId: number, groupId: string | null): Promise<void> {
+  await prisma.productLayout.updateMany({ where: { branchId, productId: { in: productIds } }, data: { groupId } });
 }

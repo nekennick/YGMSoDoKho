@@ -11,6 +11,7 @@ model ProductLayout {
   id        String   @id @default(cuid())
   productId Int
   branchId  Int
+  groupId   String?
   x         Float
   y         Float
   color     String   @default("#3b82f6")

@@ -8,6 +8,7 @@ export type CanvasProduct = {
   y: number;
   color: string;
   quantity: number;
+  groupId?: string | null;
 };
 
 export type ProductOption = {
@@ -46,6 +47,7 @@ export function mergeCatalogAndLayouts(
         y: layout.y,
         color: layout.color,
         quantity: product.quantity,
+        groupId: layout.groupId,
       });
     } else {
       availableProducts.push({ productId: product.id, name: product.name, quantity: product.quantity });

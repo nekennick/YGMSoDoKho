@@ -2,6 +2,7 @@ export type ProductLayoutRecord = {
   id: string;
   productId: number;
   branchId: number;
+  groupId?: string | null;
   x: number;
   y: number;
   color: string;

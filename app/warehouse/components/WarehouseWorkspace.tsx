@@ -37,6 +37,7 @@ export function WarehouseWorkspace({ result, branchId }: { result: WarehouseData
   return (
     <main className="flex min-h-[calc(100vh-3.5rem)] flex-col">
       <div className="flex items-center gap-2 border-b bg-white px-4 py-2 text-sm">
+        <button type="button" className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-blue-700 md:hidden" onClick={() => setAddDialogOpen(true)}>+ Thêm sản phẩm</button>
         <AddProductDialog products={availableProducts} branchId={branchId} open={addDialogOpen} onOpenChange={setAddDialogOpen} onAdded={addProduct} />
         <span className="font-medium text-slate-900">{canvasProducts.length} sản phẩm trên canvas</span>
         <span className="text-slate-400">·</span>

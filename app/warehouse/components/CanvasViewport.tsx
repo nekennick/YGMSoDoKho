@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { DndContext, type DragEndEvent, type DragMoveEvent, type DragStartEvent, useDraggable } from "@dnd-kit/core";
+import { DndContext, PointerSensor, type DragEndEvent, type DragMoveEvent, type DragStartEvent, useDraggable, useSensor, useSensors } from "@dnd-kit/core";
 import { useDroppable } from "@dnd-kit/core";
 import { TransformComponent, TransformWrapper, type ReactZoomPanPinchRef } from "react-zoom-pan-pinch";
 import type { CanvasProduct } from "@/lib/product-catalog/merge";
@@ -14,13 +14,12 @@ function TrashDropZone() {
   return <div ref={setNodeRef} className={`touch-trash-zone fixed bottom-5 left-1/2 z-30 -translate-x-1/2 rounded-full px-6 py-3 text-sm font-semibold shadow-lg transition ${isOver ? "bg-red-600 text-white scale-110" : "bg-slate-900/90 text-white"}`}>🗑️ {isOver ? "Thả để xóa" : "Kéo vào đây để xóa"}</div>;
 }
 
-function DraggableProduct({ product, scale, selected, groupDelta, onSelect, onContextMenu, onMultiSelectStart, onLongPress }: { product: CanvasProduct; scale: number; selected: boolean; groupDelta: { x: number; y: number } | null; onSelect: (event: { shiftKey: boolean; touch?: boolean }) => void; onContextMenu: (event: React.MouseEvent) => void; onMultiSelectStart: () => void; onLongPress: (x: number, y: number) => void }) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: product.productId });
+function DraggableProduct({ product, scale, selected, groupDelta, dragDisabled, onSelect, onContextMenu, onMultiSelectStart, onLongPress }: { product: CanvasProduct; scale: number; selected: boolean; groupDelta: { x: number; y: number } | null; dragDisabled: boolean; onSelect: (shift: boolean) => void; onContextMenu: (event: React.MouseEvent) => void; onMultiSelectStart: () => void; onLongPress: (x: number, y: number) => void }) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: product.productId, disabled: dragDisabled });
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const multiSelectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pointerStart = useRef<{ x: number; y: number } | null>(null);
   const longPressTriggered = useRef(false);
-  const lastPointerWasTouch = useRef(false);
   const deltaX = isDragging ? (transform?.x ?? 0) / scale : (groupDelta?.x ?? 0);
   const deltaY = isDragging ? (transform?.y ?? 0) / scale : (groupDelta?.y ?? 0);
   const clearLongPress = () => {
@@ -29,6 +28,10 @@ function DraggableProduct({ product, scale, selected, groupDelta, onSelect, onCo
     longPressTimer.current = null;
     multiSelectTimer.current = null;
   };
+  useEffect(() => {
+    if (isDragging) clearLongPress();
+    return clearLongPress;
+  }, [isDragging]);
   return (
     <div
       ref={setNodeRef}
@@ -36,7 +39,6 @@ function DraggableProduct({ product, scale, selected, groupDelta, onSelect, onCo
       {...attributes}
       onPointerDown={(event) => {
         listeners?.onPointerDown?.(event);
-        lastPointerWasTouch.current = event.pointerType !== "mouse";
         if (event.pointerType === "mouse") return;
         pointerStart.current = { x: event.clientX, y: event.clientY };
         longPressTriggered.current = false;
@@ -46,31 +48,24 @@ function DraggableProduct({ product, scale, selected, groupDelta, onSelect, onCo
           onMultiSelectStart();
         }, 300);
         longPressTimer.current = setTimeout(() => {
+          longPressTriggered.current = true;
           onLongPress(event.clientX, event.clientY);
-        }, 500);
+        }, 1000);
       }}
       onPointerMove={(event) => {
         if (!pointerStart.current) return;
         if (Math.hypot(event.clientX - pointerStart.current.x, event.clientY - pointerStart.current.y) > 8) clearLongPress();
       }}
-      onPointerUp={(event) => {
-        if (event.pointerType === "mouse") return;
-        const start = pointerStart.current;
-        pointerStart.current = null;
-        clearLongPress();
-        if (start && Math.hypot(event.clientX - start.x, event.clientY - start.y) > 8) longPressTriggered.current = true;
-      }}
+      onPointerUp={() => { pointerStart.current = null; clearLongPress(); }}
       onPointerCancel={() => { pointerStart.current = null; clearLongPress(); }}
       onClick={(event) => {
-        if (lastPointerWasTouch.current) {
-          lastPointerWasTouch.current = false;
-          clearLongPress();
-          pointerStart.current = null;
-          if (!longPressTriggered.current) onSelect({ shiftKey: false, touch: true });
+        clearLongPress();
+        pointerStart.current = null;
+        if (longPressTriggered.current) {
           longPressTriggered.current = false;
           return;
         }
-        onSelect(event);
+        onSelect(event.shiftKey);
       }}
       onContextMenu={onContextMenu}
       data-product-id={product.productId}
@@ -91,6 +86,7 @@ function DraggableProduct({ product, scale, selected, groupDelta, onSelect, onCo
 
 export function CanvasViewport({ products, branchId, onProductsChange, onRequestAdd }: { products: CanvasProduct[]; branchId: number; onProductsChange: (products: CanvasProduct[]) => void; onRequestAdd: () => void }) {
   const { spacePressed } = useKeyboard();
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
   const [dragging, setDragging] = useState(false);
   const [trashVisible, setTrashVisible] = useState(false);
   const [activeProductId, setActiveProductId] = useState<number | null>(null);
@@ -249,7 +245,7 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
   }, []);
 
   return (
-    <DndContext id="warehouse-canvas" onDragStart={(event: DragStartEvent) => { const productId = Number(event.active.id); const ids = selectedIds.includes(productId) ? selectedIds : [productId]; setSelectedIds(ids); setDragPreview({ ids, x: 0, y: 0 }); setDragging(true); setTrashVisible(!isTouchDevice); clearTrashTimer(); if (isTouchDevice) trashTimer.current = setTimeout(() => setTrashVisible(true), 700); }} onDragMove={(event: DragMoveEvent) => { const scale = transformRef.current?.instance.transformState.scale ?? 1; setDragPreview((preview) => preview ? { ...preview, x: event.delta.x / scale, y: event.delta.y / scale } : null); }} onDragCancel={() => { setDragging(false); setTrashVisible(false); clearTrashTimer(); setDragPreview(null); }} onDragEnd={async (event: DragEndEvent) => {
+    <DndContext id="warehouse-canvas" sensors={sensors} onDragStart={(event: DragStartEvent) => { if (mobileMultiSelect) return; const productId = Number(event.active.id); const ids = selectedIds.includes(productId) ? selectedIds : [productId]; setSelectedIds(ids); setDragPreview({ ids, x: 0, y: 0 }); setDragging(true); setTrashVisible(!isTouchDevice); clearTrashTimer(); if (isTouchDevice) trashTimer.current = setTimeout(() => setTrashVisible(true), 100); }} onDragMove={(event: DragMoveEvent) => { const scale = transformRef.current?.instance.transformState.scale ?? 1; setDragPreview((preview) => preview ? { ...preview, x: event.delta.x / scale, y: event.delta.y / scale } : null); }} onDragCancel={() => { setDragging(false); setTrashVisible(false); clearTrashTimer(); setDragPreview(null); }} onDragEnd={async (event: DragEndEvent) => {
       setDragging(false);
       setTrashVisible(false);
       clearTrashTimer();
@@ -317,7 +313,41 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
           </div>
           <TransformComponent wrapperClass="!h-full !w-full" contentClass="!h-full !w-full">
             <div className="relative h-[10000px] w-[10000px]">
-              {products.map((product) => <div key={product.productId} onFocus={() => setActiveProductId(product.productId)}><DraggableProduct product={product} scale={instance.transformState.scale} selected={selectedIds.includes(product.productId)} groupDelta={dragPreview?.ids.includes(product.productId) ? { x: dragPreview.x, y: dragPreview.y } : null} onSelect={(event) => { if (event.touch) { setContextMenu(null); if (mobileMultiSelect) setSelectedIds((ids) => Array.from(new Set([...ids, product.productId]))); else setSelectedIds([product.productId]); return; } setSelectedIds((ids) => event.shiftKey ? (ids.includes(product.productId) ? ids.filter((id) => id !== product.productId) : [...ids, product.productId]) : [product.productId]); }} onMultiSelectStart={() => { setMobileMultiSelect(true); setSelectedIds([product.productId]); }} onLongPress={(x, y) => { const nextSelectedIds = selectedIds.includes(product.productId) ? selectedIds : [product.productId]; setSelectedIds(nextSelectedIds); setContextMenu({ productId: product.productId, x, y, selectedIds: nextSelectedIds }); }} onContextMenu={(event) => { event.preventDefault(); const nextSelectedIds = selectedIds.includes(product.productId) ? selectedIds : [product.productId]; setSelectedIds(nextSelectedIds); setContextMenu({ productId: product.productId, x: event.clientX, y: event.clientY, selectedIds: nextSelectedIds }); }} /></div>)}
+              {products.map((product) => (
+                <div key={product.productId} onFocus={() => setActiveProductId(product.productId)}>
+                  <DraggableProduct
+                    product={product}
+                    scale={instance.transformState.scale}
+                    selected={selectedIds.includes(product.productId)}
+                    groupDelta={dragPreview?.ids.includes(product.productId) ? { x: dragPreview.x, y: dragPreview.y } : null}
+                    dragDisabled={mobileMultiSelect}
+                    onSelect={(shift) => {
+                      setContextMenu(null);
+                      setActiveProductId(product.productId);
+                      setSelectedIds((ids) => {
+                        if (mobileMultiSelect || shift) return ids.includes(product.productId) ? ids.filter((id) => id !== product.productId) : [...ids, product.productId];
+                        return [product.productId];
+                      });
+                    }}
+                    onMultiSelectStart={() => {
+                      setMobileMultiSelect(true);
+                      setActiveProductId(product.productId);
+                      setSelectedIds((ids) => ids.includes(product.productId) ? ids : [product.productId]);
+                    }}
+                    onLongPress={(x, y) => {
+                      const nextSelectedIds = selectedIds.includes(product.productId) ? selectedIds : [product.productId];
+                      setSelectedIds(nextSelectedIds);
+                      setContextMenu({ productId: product.productId, x, y, selectedIds: nextSelectedIds });
+                    }}
+                    onContextMenu={(event) => {
+                      event.preventDefault();
+                      const nextSelectedIds = selectedIds.includes(product.productId) ? selectedIds : [product.productId];
+                      setSelectedIds(nextSelectedIds);
+                      setContextMenu({ productId: product.productId, x: event.clientX, y: event.clientY, selectedIds: nextSelectedIds });
+                    }}
+                  />
+                </div>
+              ))}
             </div>
           </TransformComponent>
         </div>

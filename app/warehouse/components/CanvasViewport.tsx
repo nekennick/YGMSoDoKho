@@ -49,6 +49,7 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
   const [contextMenu, setContextMenu] = useState<{ productId: number; x: number; y: number; selectedIds: number[] } | null>(null);
   const [selectionBox, setSelectionBox] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
   const selectionStart = useRef<{ x: number; y: number } | null>(null);
+  const selectionMoved = useRef(false);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const transformRef = useRef<ReactZoomPanPinchRef | null>(null);
 
@@ -73,6 +74,7 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
       const rect = canvasRef.current.getBoundingClientRect();
       const x = event.clientX - rect.left;
       const y = event.clientY - rect.top;
+      if (Math.abs(x - selectionStart.current.x) > 3 || Math.abs(y - selectionStart.current.y) > 3) selectionMoved.current = true;
       setSelectionBox({ x: Math.min(selectionStart.current.x, x), y: Math.min(selectionStart.current.y, y), width: Math.abs(x - selectionStart.current.x), height: Math.abs(y - selectionStart.current.y) });
     };
     const onUp = (event: PointerEvent) => {
@@ -85,7 +87,7 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
         const right = Math.max(selectionStart.current.x, endX);
         const bottom = Math.max(selectionStart.current.y, endY);
         const ids = Array.from(canvasRef.current.querySelectorAll<HTMLElement>(".product-chip")).filter((node) => { const item = node.getBoundingClientRect(); const x = item.left - rect.left; const y = item.top - rect.top; return x < right && x + item.width > left && y < bottom && y + item.height > top; }).map((node) => Number(node.dataset.productId)).filter(Number.isFinite);
-        if (ids.length) setSelectedIds(ids);
+        setSelectedIds(ids);
       }
       selectionStart.current = null; setSelectionBox(null);
     };
@@ -135,7 +137,7 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
         <div
           ref={canvasRef}
           className={`relative h-full overflow-hidden bg-slate-50 ${spacePressed ? "cursor-grab" : "cursor-default"}`}
-          onPointerDown={(event) => { const target = event.target instanceof HTMLElement ? event.target : null; if (event.button === 0 && !target?.closest(".product-chip")) { const rect = event.currentTarget.getBoundingClientRect(); selectionStart.current = { x: event.clientX - rect.left, y: event.clientY - rect.top }; } }}
+          onPointerDown={(event) => { const target = event.target instanceof HTMLElement ? event.target : null; if (event.button === 0 && !target?.closest(".product-chip")) { const rect = event.currentTarget.getBoundingClientRect(); selectionStart.current = { x: event.clientX - rect.left, y: event.clientY - rect.top }; selectionMoved.current = false; } }}
           onMouseDown={(event) => {
             if (event.button !== 1) return;
             event.preventDefault();
@@ -151,7 +153,7 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
               onRequestAdd();
             }
           }}
-          onClick={() => { setContextMenu(null); }}
+          onClick={(event) => { setContextMenu(null); const target = event.target instanceof HTMLElement ? event.target : null; if (!target?.closest(".product-chip") && !selectionMoved.current) { setSelectedIds([]); setActiveProductId(null); } selectionMoved.current = false; }}
         >
           {selectionBox && <div className="pointer-events-none absolute z-20 border border-blue-500 bg-blue-400/20" style={{ left: selectionBox.x, top: selectionBox.y, width: selectionBox.width, height: selectionBox.height }} />}
           <div className="absolute left-3 top-3 z-10 rounded-md border bg-white/90 px-2 py-1 text-xs text-slate-600 shadow-sm">

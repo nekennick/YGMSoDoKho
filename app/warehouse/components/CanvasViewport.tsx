@@ -36,7 +36,7 @@ export function CanvasViewport({ products, onProductsChange }: { products: Canva
   const transformRef = useRef<ReactZoomPanPinchRef | null>(null);
 
   return (
-    <DndContext onDragEnd={async (event: DragEndEvent) => {
+    <DndContext id="warehouse-canvas" onDragEnd={async (event: DragEndEvent) => {
       if (!event.active || (event.delta.x === 0 && event.delta.y === 0)) return;
       const productId = Number(event.active.id);
       const previous = products.find((product) => product.productId === productId);

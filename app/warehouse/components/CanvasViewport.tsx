@@ -68,6 +68,8 @@ function DraggableProduct({ product, scale, selected, groupDelta, onSelect, onCo
       onClick={(event) => {
         if (lastPointerWasTouch.current) {
           lastPointerWasTouch.current = false;
+          clearLongPress();
+          pointerStart.current = null;
           if (!longPressTriggered.current) onSelect({ shiftKey: false, touch: true });
           longPressTriggered.current = false;
           return;

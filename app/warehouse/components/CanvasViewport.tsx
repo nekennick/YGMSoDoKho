@@ -11,7 +11,7 @@ import { deleteProductLayoutAction } from "@/app/warehouse/actions/product-layou
 
 function TrashDropZone() {
   const { isOver, setNodeRef } = useDroppable({ id: "trash-zone" });
-  return <div ref={setNodeRef} className={`fixed bottom-5 left-1/2 z-30 -translate-x-1/2 rounded-full px-6 py-3 text-sm font-semibold shadow-lg transition ${isOver ? "bg-red-600 text-white scale-110" : "bg-slate-900/90 text-white"}`}>🗑️ {isOver ? "Thả để xóa" : "Kéo vào đây để xóa"}</div>;
+  return <div ref={setNodeRef} className={`touch-trash-zone fixed bottom-5 left-1/2 z-30 -translate-x-1/2 rounded-full px-6 py-3 text-sm font-semibold shadow-lg transition ${isOver ? "bg-red-600 text-white scale-110" : "bg-slate-900/90 text-white"}`}>🗑️ {isOver ? "Thả để xóa" : "Kéo vào đây để xóa"}</div>;
 }
 
 function DraggableProduct({ product, scale }: { product: CanvasProduct; scale: number }) {

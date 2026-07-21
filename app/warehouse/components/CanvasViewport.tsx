@@ -14,7 +14,7 @@ function TrashDropZone() {
   return <div ref={setNodeRef} className={`touch-trash-zone fixed bottom-5 left-1/2 z-30 -translate-x-1/2 rounded-full px-6 py-3 text-sm font-semibold shadow-lg transition ${isOver ? "bg-red-600 text-white scale-110" : "bg-slate-900/90 text-white"}`}>🗑️ {isOver ? "Thả để xóa" : "Kéo vào đây để xóa"}</div>;
 }
 
-function DraggableProduct({ product, scale, selected, highlighted, groupDelta, dragDisabled, multiTouchGesture, onSelect, onContextMenu, onMultiSelectStart, onLongPress }: { product: CanvasProduct; scale: number; selected: boolean; highlighted: boolean; groupDelta: { x: number; y: number } | null; dragDisabled: boolean; multiTouchGesture: boolean; onSelect: (shift: boolean) => void; onContextMenu: (event: React.MouseEvent) => void; onMultiSelectStart: () => void; onLongPress: (x: number, y: number) => void }) {
+function DraggableProduct({ product, scale, selected, groupDelta, dragDisabled, multiTouchGesture, onSelect, onContextMenu, onMultiSelectStart, onLongPress }: { product: CanvasProduct; scale: number; selected: boolean; groupDelta: { x: number; y: number } | null; dragDisabled: boolean; multiTouchGesture: boolean; onSelect: (shift: boolean) => void; onContextMenu: (event: React.MouseEvent) => void; onMultiSelectStart: () => void; onLongPress: (x: number, y: number) => void }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: product.productId, disabled: dragDisabled });
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const multiSelectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -69,7 +69,7 @@ function DraggableProduct({ product, scale, selected, highlighted, groupDelta, d
       }}
       onContextMenu={onContextMenu}
       data-product-id={product.productId}
-      className={`product-chip absolute flex h-10 w-64 min-w-64 max-w-64 touch-none items-center overflow-hidden rounded-lg border px-3 text-sm font-medium text-white shadow-sm transition-[filter,box-shadow] ${selected ? "border-yellow-300 brightness-125 saturate-150 ring-4 ring-yellow-300/80 ring-offset-2 ring-offset-slate-50" : highlighted ? "border-sky-300 ring-4 ring-sky-400/80 ring-offset-2 ring-offset-slate-50" : "border-slate-200"}`}
+      className={`product-chip absolute flex h-10 w-64 min-w-64 max-w-64 touch-none items-center overflow-hidden rounded-lg border px-3 text-sm font-medium text-white shadow-sm transition-[filter,box-shadow] ${selected ? "border-yellow-300 brightness-125 saturate-150 ring-4 ring-yellow-300/80 ring-offset-2 ring-offset-slate-50" : "border-slate-200"}`}
       style={{
         left: product.x,
         top: product.y,
@@ -86,7 +86,7 @@ function DraggableProduct({ product, scale, selected, highlighted, groupDelta, d
   );
 }
 
-export function CanvasViewport({ products, branchId, onProductsChange, onRequestAdd, onRegisterCenterPosition, focusProductId, searchQuery }: { products: CanvasProduct[]; branchId: number; onProductsChange: (products: CanvasProduct[]) => void; onRequestAdd: () => void; onRegisterCenterPosition?: (getter: (() => { x: number; y: number }) | null) => void; focusProductId?: number | null; searchQuery?: string }) {
+export function CanvasViewport({ products, branchId, onProductsChange, onRequestAdd, onRegisterCenterPosition, focusProductId }: { products: CanvasProduct[]; branchId: number; onProductsChange: (products: CanvasProduct[]) => void; onRequestAdd: () => void; onRegisterCenterPosition?: (getter: (() => { x: number; y: number }) | null) => void; focusProductId?: number | null }) {
   const { spacePressed } = useKeyboard();
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
   const [dragging, setDragging] = useState(false);
@@ -97,7 +97,6 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
   const [isTouchDevice, setIsTouchDevice] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ productId: number; x: number; y: number; selectedIds: number[] } | null>(null);
   const [mobileMultiSelect, setMobileMultiSelect] = useState(false);
-  const [highlightedProductId, setHighlightedProductId] = useState<number | null>(null);
   const [multiTouchGesture, setMultiTouchGesture] = useState(false);
   const [selectionBox, setSelectionBox] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
   const selectionStart = useRef<{ x: number; y: number } | null>(null);
@@ -144,72 +143,6 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
     if (trashTimer.current) clearTimeout(trashTimer.current);
     trashTimer.current = null;
   };
-
-  const centerAll = () => {
-    if (!products.length || !canvasRef.current || !transformRef.current) return;
-    const viewport = canvasRef.current.getBoundingClientRect();
-    const chipNodes = new Map<number, HTMLElement>();
-    canvasRef.current.querySelectorAll<HTMLElement>(".product-chip").forEach((node) => {
-      const id = Number(node.dataset.productId);
-      if (Number.isFinite(id)) chipNodes.set(id, node);
-    });
-    const bounds = products.reduce((result, product) => {
-      const width = chipNodes.get(product.productId)?.offsetWidth ?? 192;
-      const height = chipNodes.get(product.productId)?.offsetHeight ?? 40;
-      return {
-        minX: Math.min(result.minX, product.x),
-        minY: Math.min(result.minY, product.y),
-        maxX: Math.max(result.maxX, product.x + width),
-        maxY: Math.max(result.maxY, product.y + height),
-      };
-    }, { minX: Number.POSITIVE_INFINITY, minY: Number.POSITIVE_INFINITY, maxX: Number.NEGATIVE_INFINITY, maxY: Number.NEGATIVE_INFINITY });
-    const padding = 80;
-    const contentWidth = Math.max(bounds.maxX - bounds.minX + padding, 1);
-    const contentHeight = Math.max(bounds.maxY - bounds.minY + padding, 1);
-    const scale = Math.min(5, Math.max(0.2, Math.min(viewport.width / contentWidth, viewport.height / contentHeight)));
-    const currentTransform = transformRef.current.instance.transformState;
-    transformRef.current.setTransform(currentTransform.positionX, currentTransform.positionY, scale, 0);
-    window.requestAnimationFrame(() => {
-      if (!canvasRef.current || !transformRef.current) return;
-      const visibleNodes = Array.from(canvasRef.current.querySelectorAll<HTMLElement>(".product-chip"));
-      if (!visibleNodes.length) return;
-      const chipBounds = visibleNodes.reduce((result, node) => {
-        const rect = node.getBoundingClientRect();
-        return {
-          left: Math.min(result.left, rect.left),
-          top: Math.min(result.top, rect.top),
-          right: Math.max(result.right, rect.right),
-          bottom: Math.max(result.bottom, rect.bottom),
-        };
-      }, { left: Number.POSITIVE_INFINITY, top: Number.POSITIVE_INFINITY, right: Number.NEGATIVE_INFINITY, bottom: Number.NEGATIVE_INFINITY });
-      const deltaX = viewport.left + viewport.width / 2 - (chipBounds.left + chipBounds.right) / 2;
-      const deltaY = viewport.top + viewport.height / 2 - (chipBounds.top + chipBounds.bottom) / 2;
-      const latestTransform = transformRef.current.instance.transformState;
-      transformRef.current.setTransform(latestTransform.positionX + deltaX, latestTransform.positionY + deltaY, scale, 300);
-    });
-  };
-
-  useEffect(() => {
-    const query = searchQuery?.trim().toLocaleLowerCase("vi");
-    if (!query) {
-      setHighlightedProductId(null);
-      return;
-    }
-    const product = productsRef.current.find((item) => item.name.toLocaleLowerCase("vi").includes(query));
-    if (!product || !canvasRef.current || !transformRef.current) {
-      setHighlightedProductId(null);
-      return;
-    }
-    const viewport = canvasRef.current.getBoundingClientRect();
-    const node = canvasRef.current.querySelector<HTMLElement>(`.product-chip[data-product-id="${product.productId}"]`);
-    const width = node?.offsetWidth ?? 192;
-    const height = node?.offsetHeight ?? 40;
-    const scale = transformRef.current.instance.transformState.scale;
-    transformRef.current.setTransform(viewport.width / 2 - (product.x + width / 2) * scale, viewport.height / 2 - (product.y + height / 2) * scale, scale, 300);
-    setHighlightedProductId(product.productId);
-    const timeout = window.setTimeout(() => setHighlightedProductId(null), 2000);
-    return () => window.clearTimeout(timeout);
-  }, [searchQuery]);
 
   useEffect(() => {
     if (focusProductId === null || focusProductId === undefined) return;
@@ -457,7 +390,6 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
           <div className="absolute left-3 top-3 z-10 rounded-md border bg-white/90 px-2 py-1 text-xs text-slate-600 shadow-sm">
             {Math.round(instance.transformState.scale * 100)}%
             <button className="ml-2 underline" onClick={() => resetTransform()}>Reset</button>
-            <button className="ml-2 underline" onClick={centerAll} disabled={!products.length}>Center All</button>
           </div>
           <TransformComponent wrapperClass="!h-full !w-full" contentClass="!h-full !w-full">
             <div className="relative h-[10000px] w-[10000px]">
@@ -467,7 +399,6 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
                     product={product}
                     scale={instance.transformState.scale}
                     selected={selectedIds.includes(product.productId)}
-                    highlighted={highlightedProductId === product.productId}
                     groupDelta={dragPreview?.ids.includes(product.productId) ? { x: dragPreview.x, y: dragPreview.y } : null}
                     dragDisabled={mobileMultiSelect}
                     multiTouchGesture={multiTouchGesture}

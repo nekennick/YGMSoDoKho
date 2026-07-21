@@ -9,8 +9,6 @@ export function WarehouseWorkspace({ result, branchId }: { result: WarehouseData
   const [canvasProducts, setCanvasProducts] = useState(result.ok ? result.data.canvasProducts : []);
   const [availableProducts, setAvailableProducts] = useState(result.ok ? result.data.availableProducts : []);
   const [addDialogOpen, setAddDialogOpen] = useState(false);
-  const [searchInput, setSearchInput] = useState("");
-  const [searchQuery, setSearchQuery] = useState("");
   const [focusProductId, setFocusProductId] = useState<number | null>(null);
   const centerPositionRef = useRef<(() => { x: number; y: number }) | null>(null);
   const registerCenterPosition = useCallback((getter: (() => { x: number; y: number }) | null) => {
@@ -47,16 +45,12 @@ export function WarehouseWorkspace({ result, branchId }: { result: WarehouseData
       <div className="flex flex-wrap items-center gap-2 border-b bg-white px-4 py-2 text-sm">
         <button type="button" className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-blue-700 md:hidden" onClick={() => setAddDialogOpen(true)}>+ Thêm sản phẩm</button>
         <AddProductDialog products={availableProducts} branchId={branchId} getPosition={() => centerPositionRef.current?.() ?? { x: 400, y: 250 }} open={addDialogOpen} onOpenChange={setAddDialogOpen} onAdded={addProduct} />
-        <form className="flex min-w-0 flex-1 gap-1 sm:max-w-sm" onSubmit={(event) => { event.preventDefault(); setSearchQuery(searchInput); }}>
-          <input value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="Tìm sản phẩm trên sơ đồ..." className="min-w-0 flex-1 rounded-md border px-2.5 py-1.5 text-xs outline-none focus:ring-2 focus:ring-slate-300" />
-          <button type="submit" className="rounded-md border bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">Tìm</button>
-        </form>
         <span className="font-medium text-slate-900">{canvasProducts.length} sản phẩm trên canvas</span>
         <span className="text-slate-400">·</span>
         <span className="text-slate-500">{availableProducts.length} sản phẩm có thể thêm</span>
       </div>
       <section className="relative flex-1">
-        <CanvasViewport products={canvasProducts} branchId={branchId} onProductsChange={setCanvasProducts} onRequestAdd={() => setAddDialogOpen(true)} onRegisterCenterPosition={registerCenterPosition} focusProductId={focusProductId} searchQuery={searchQuery} />
+        <CanvasViewport products={canvasProducts} branchId={branchId} onProductsChange={setCanvasProducts} onRequestAdd={() => setAddDialogOpen(true)} onRegisterCenterPosition={registerCenterPosition} focusProductId={focusProductId} />
       </section>
     </main>
   );

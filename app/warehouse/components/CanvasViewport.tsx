@@ -14,7 +14,7 @@ function TrashDropZone() {
   return <div ref={setNodeRef} className={`touch-trash-zone fixed bottom-5 left-1/2 z-30 -translate-x-1/2 rounded-full px-6 py-3 text-sm font-semibold shadow-lg transition ${isOver ? "bg-red-600 text-white scale-110" : "bg-slate-900/90 text-white"}`}>🗑️ {isOver ? "Thả để xóa" : "Kéo vào đây để xóa"}</div>;
 }
 
-function DraggableProduct({ product, scale, selected, groupDelta, onSelect, onContextMenu }: { product: CanvasProduct; scale: number; selected: boolean; groupDelta: { x: number; y: number } | null; onSelect: (shift: boolean) => void; onContextMenu: (event: React.MouseEvent) => void }) {
+function DraggableProduct({ product, scale, selected, groupDelta, onSelect, onContextMenu }: { product: CanvasProduct; scale: number; selected: boolean; groupDelta: { x: number; y: number } | null; onSelect: (event: React.MouseEvent) => void; onContextMenu: (event: React.MouseEvent) => void }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: product.productId });
   const deltaX = isDragging ? (transform?.x ?? 0) / scale : (groupDelta?.x ?? 0);
   const deltaY = isDragging ? (transform?.y ?? 0) / scale : (groupDelta?.y ?? 0);
@@ -23,7 +23,7 @@ function DraggableProduct({ product, scale, selected, groupDelta, onSelect, onCo
       ref={setNodeRef}
       {...listeners}
       {...attributes}
-      onClick={(event) => onSelect(event.shiftKey)}
+      onClick={onSelect}
       onContextMenu={onContextMenu}
       data-product-id={product.productId}
       className={`product-chip absolute min-w-48 touch-none rounded-lg border px-3 py-2 text-sm font-medium text-white shadow-sm transition-[filter,box-shadow] ${selected ? "border-yellow-300 brightness-125 saturate-150 ring-4 ring-yellow-300/80 ring-offset-2 ring-offset-slate-50" : "border-slate-200"}`}
@@ -47,12 +47,22 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
   const [activeProductId, setActiveProductId] = useState<number | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [dragPreview, setDragPreview] = useState<{ ids: number[]; x: number; y: number } | null>(null);
+  const [isTouchDevice, setIsTouchDevice] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ productId: number; x: number; y: number; selectedIds: number[] } | null>(null);
   const [selectionBox, setSelectionBox] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
   const selectionStart = useRef<{ x: number; y: number } | null>(null);
   const selectionMoved = useRef(false);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const transformRef = useRef<ReactZoomPanPinchRef | null>(null);
+  const lastTouchTap = useRef<{ productId: number; at: number } | null>(null);
+
+  useEffect(() => {
+    const media = window.matchMedia("(pointer: coarse)");
+    const update = () => setIsTouchDevice(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
 
   const alignSelected = (mode: "left" | "right" | "center") => {
     if (selectedIds.length < 2) return;
@@ -225,7 +235,7 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
         <div
           ref={canvasRef}
           className={`relative h-full overflow-hidden bg-slate-50 ${spacePressed ? "cursor-grab" : "cursor-default"}`}
-          onPointerDown={(event) => { const target = event.target instanceof HTMLElement ? event.target : null; if (event.button === 0 && !target?.closest(".product-chip")) { const rect = event.currentTarget.getBoundingClientRect(); selectionStart.current = { x: event.clientX - rect.left, y: event.clientY - rect.top }; selectionMoved.current = false; } }}
+          onPointerDown={(event) => { const target = event.target instanceof HTMLElement ? event.target : null; if (!isTouchDevice && event.button === 0 && !target?.closest(".product-chip")) { const rect = event.currentTarget.getBoundingClientRect(); selectionStart.current = { x: event.clientX - rect.left, y: event.clientY - rect.top }; selectionMoved.current = false; } }}
           onMouseDown={(event) => {
             if (event.button !== 1) return;
             event.preventDefault();
@@ -250,7 +260,7 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
           </div>
           <TransformComponent wrapperClass="!h-full !w-full" contentClass="!h-full !w-full">
             <div className="relative h-[10000px] w-[10000px]">
-              {products.map((product) => <div key={product.productId} onFocus={() => setActiveProductId(product.productId)}><DraggableProduct product={product} scale={instance.transformState.scale} selected={selectedIds.includes(product.productId)} groupDelta={dragPreview?.ids.includes(product.productId) ? { x: dragPreview.x, y: dragPreview.y } : null} onSelect={(shift) => setSelectedIds((ids) => shift ? (ids.includes(product.productId) ? ids.filter((id) => id !== product.productId) : [...ids, product.productId]) : [product.productId])} onContextMenu={(event) => { event.preventDefault(); const nextSelectedIds = selectedIds.includes(product.productId) ? selectedIds : [product.productId]; setSelectedIds(nextSelectedIds); setContextMenu({ productId: product.productId, x: event.clientX, y: event.clientY, selectedIds: nextSelectedIds }); }} /></div>)}
+              {products.map((product) => <div key={product.productId} onFocus={() => setActiveProductId(product.productId)}><DraggableProduct product={product} scale={instance.transformState.scale} selected={selectedIds.includes(product.productId)} groupDelta={dragPreview?.ids.includes(product.productId) ? { x: dragPreview.x, y: dragPreview.y } : null} onSelect={(event) => { if (isTouchDevice) { const now = Date.now(); const previousTap = lastTouchTap.current; const isSecondChipTap = previousTap && previousTap.productId !== product.productId && now - previousTap.at < 700; setSelectedIds((ids) => isSecondChipTap ? Array.from(new Set([...ids, product.productId])) : [product.productId]); lastTouchTap.current = { productId: product.productId, at: now }; return; } setSelectedIds((ids) => event.shiftKey ? (ids.includes(product.productId) ? ids.filter((id) => id !== product.productId) : [...ids, product.productId]) : [product.productId]); }} onContextMenu={(event) => { event.preventDefault(); const nextSelectedIds = selectedIds.includes(product.productId) ? selectedIds : [product.productId]; setSelectedIds(nextSelectedIds); setContextMenu({ productId: product.productId, x: event.clientX, y: event.clientY, selectedIds: nextSelectedIds }); }} /></div>)}
             </div>
           </TransformComponent>
         </div>

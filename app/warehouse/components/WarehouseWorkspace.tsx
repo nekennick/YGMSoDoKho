@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { WarehouseDataResult } from "@/lib/warehouse/initial-data";
 import { CanvasViewport } from "@/app/warehouse/components/CanvasViewport";
 import { AddProductDialog } from "@/app/warehouse/components/AddProductDialog";
@@ -8,6 +8,15 @@ import { AddProductDialog } from "@/app/warehouse/components/AddProductDialog";
 export function WarehouseWorkspace({ result, branchId }: { result: WarehouseDataResult; branchId: number }) {
   const [canvasProducts, setCanvasProducts] = useState(result.ok ? result.data.canvasProducts : []);
   const [availableProducts, setAvailableProducts] = useState(result.ok ? result.data.availableProducts : []);
+  useEffect(() => {
+    if (result.ok) {
+      setCanvasProducts(result.data.canvasProducts);
+      setAvailableProducts(result.data.availableProducts);
+    } else {
+      setCanvasProducts([]);
+      setAvailableProducts([]);
+    }
+  }, [branchId, result]);
   if (!result.ok) {
     return (
       <main className="flex min-h-[calc(100vh-3.5rem)] items-center justify-center p-8">

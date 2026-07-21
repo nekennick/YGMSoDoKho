@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { DndContext, type DragEndEvent, useDraggable } from "@dnd-kit/core";
+import { DndContext, type DragEndEvent, type DragMoveEvent, type DragStartEvent, useDraggable } from "@dnd-kit/core";
 import { useDroppable } from "@dnd-kit/core";
 import { TransformComponent, TransformWrapper, type ReactZoomPanPinchRef } from "react-zoom-pan-pinch";
 import type { CanvasProduct } from "@/lib/product-catalog/merge";
@@ -14,10 +14,10 @@ function TrashDropZone() {
   return <div ref={setNodeRef} className={`touch-trash-zone fixed bottom-5 left-1/2 z-30 -translate-x-1/2 rounded-full px-6 py-3 text-sm font-semibold shadow-lg transition ${isOver ? "bg-red-600 text-white scale-110" : "bg-slate-900/90 text-white"}`}>🗑️ {isOver ? "Thả để xóa" : "Kéo vào đây để xóa"}</div>;
 }
 
-function DraggableProduct({ product, scale, selected, onSelect, onContextMenu }: { product: CanvasProduct; scale: number; selected: boolean; onSelect: (shift: boolean) => void; onContextMenu: (event: React.MouseEvent) => void }) {
+function DraggableProduct({ product, scale, selected, groupDelta, onSelect, onContextMenu }: { product: CanvasProduct; scale: number; selected: boolean; groupDelta: { x: number; y: number } | null; onSelect: (shift: boolean) => void; onContextMenu: (event: React.MouseEvent) => void }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: product.productId });
-  const deltaX = (transform?.x ?? 0) / scale;
-  const deltaY = (transform?.y ?? 0) / scale;
+  const deltaX = isDragging ? (transform?.x ?? 0) / scale : (groupDelta?.x ?? 0);
+  const deltaY = isDragging ? (transform?.y ?? 0) / scale : (groupDelta?.y ?? 0);
   return (
     <div
       ref={setNodeRef}
@@ -46,6 +46,7 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
   const [dragging, setDragging] = useState(false);
   const [activeProductId, setActiveProductId] = useState<number | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [dragPreview, setDragPreview] = useState<{ ids: number[]; x: number; y: number } | null>(null);
   const [contextMenu, setContextMenu] = useState<{ productId: number; x: number; y: number; selectedIds: number[] } | null>(null);
   const [selectionBox, setSelectionBox] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
   const selectionStart = useRef<{ x: number; y: number } | null>(null);
@@ -55,18 +56,54 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if ((event.key !== "Delete" && event.key !== "Backspace") || activeProductId === null) return;
       if (event.target instanceof HTMLElement && (event.target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(event.target.tagName))) return;
-      event.preventDefault();
-      const product = products.find((item) => item.productId === activeProductId);
-      if (!product) return;
-      void deleteProductLayoutAction({ productId: activeProductId, branchId }).then((result) => {
-        if (result.ok) onProductsChange(products.filter((item) => item.productId !== activeProductId));
-      });
+      const usesCommand = event.ctrlKey || event.metaKey;
+      if (usesCommand && event.key.toLowerCase() === "a") {
+        event.preventDefault();
+        setSelectedIds(products.map((product) => product.productId));
+        setActiveProductId(products[0]?.productId ?? null);
+        return;
+      }
+      if (event.key === "Escape") {
+        setSelectedIds([]);
+        setActiveProductId(null);
+        setContextMenu(null);
+        return;
+      }
+      if (usesCommand && event.key.toLowerCase() === "g" && selectedIds.length > 1) {
+        event.preventDefault();
+        const groupId = event.shiftKey ? null : crypto.randomUUID();
+        void setProductLayoutsGroupAction({ branchId, productIds: selectedIds, groupId }).then((result) => {
+          if (result.ok) onProductsChange(products.map((product) => selectedIds.includes(product.productId) ? { ...product, groupId } : product));
+        });
+        return;
+      }
+      if (event.key === "Delete" || event.key === "Backspace") {
+        const ids = selectedIds.length ? selectedIds : (activeProductId === null ? [] : [activeProductId]);
+        if (!ids.length) return;
+        event.preventDefault();
+        void Promise.all(ids.map((productId) => deleteProductLayoutAction({ productId, branchId }))).then((results) => {
+          if (results.every((result) => result.ok)) {
+            onProductsChange(products.filter((product) => !ids.includes(product.productId)));
+            setSelectedIds([]);
+            setActiveProductId(null);
+          }
+        });
+        return;
+      }
+      if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key) && selectedIds.length) {
+        event.preventDefault();
+        const step = event.shiftKey ? 10 : 1;
+        const dx = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
+        const dy = event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
+        const nextProducts = products.map((product) => selectedIds.includes(product.productId) ? { ...product, x: product.x + dx, y: product.y + dy } : product);
+        onProductsChange(nextProducts);
+        void updateProductPositionsAction({ branchId, positions: nextProducts.filter((product) => selectedIds.includes(product.productId)).map(({ productId, x, y }) => ({ productId, x, y })) });
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [activeProductId, branchId, onProductsChange, products]);
+  }, [activeProductId, branchId, onProductsChange, products, selectedIds]);
 
   useEffect(() => {
     const onMove = (event: PointerEvent) => {
@@ -97,8 +134,9 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
   }, []);
 
   return (
-    <DndContext id="warehouse-canvas" onDragStart={() => setDragging(true)} onDragCancel={() => setDragging(false)} onDragEnd={async (event: DragEndEvent) => {
+    <DndContext id="warehouse-canvas" onDragStart={(event: DragStartEvent) => { const productId = Number(event.active.id); const ids = selectedIds.includes(productId) ? selectedIds : [productId]; setSelectedIds(ids); setDragPreview({ ids, x: 0, y: 0 }); setDragging(true); }} onDragMove={(event: DragMoveEvent) => { const scale = transformRef.current?.instance.transformState.scale ?? 1; setDragPreview((preview) => preview ? { ...preview, x: event.delta.x / scale, y: event.delta.y / scale } : null); }} onDragCancel={() => { setDragging(false); setDragPreview(null); }} onDragEnd={async (event: DragEndEvent) => {
       setDragging(false);
+      setDragPreview(null);
       if (!event.active || (event.delta.x === 0 && event.delta.y === 0)) return;
       const productId = Number(event.active.id);
       const movingIds = selectedIds.includes(productId) ? selectedIds : [productId];
@@ -162,7 +200,7 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
           </div>
           <TransformComponent wrapperClass="!h-full !w-full" contentClass="!h-full !w-full">
             <div className="relative h-[10000px] w-[10000px]">
-              {products.map((product) => <div key={product.productId} onFocus={() => setActiveProductId(product.productId)}><DraggableProduct product={product} scale={instance.transformState.scale} selected={selectedIds.includes(product.productId)} onSelect={(shift) => setSelectedIds((ids) => shift ? (ids.includes(product.productId) ? ids.filter((id) => id !== product.productId) : [...ids, product.productId]) : [product.productId])} onContextMenu={(event) => { event.preventDefault(); const nextSelectedIds = selectedIds.includes(product.productId) ? selectedIds : [product.productId]; setSelectedIds(nextSelectedIds); setContextMenu({ productId: product.productId, x: event.clientX, y: event.clientY, selectedIds: nextSelectedIds }); }} /></div>)}
+              {products.map((product) => <div key={product.productId} onFocus={() => setActiveProductId(product.productId)}><DraggableProduct product={product} scale={instance.transformState.scale} selected={selectedIds.includes(product.productId)} groupDelta={dragPreview?.ids.includes(product.productId) ? { x: dragPreview.x, y: dragPreview.y } : null} onSelect={(shift) => setSelectedIds((ids) => shift ? (ids.includes(product.productId) ? ids.filter((id) => id !== product.productId) : [...ids, product.productId]) : [product.productId])} onContextMenu={(event) => { event.preventDefault(); const nextSelectedIds = selectedIds.includes(product.productId) ? selectedIds : [product.productId]; setSelectedIds(nextSelectedIds); setContextMenu({ productId: product.productId, x: event.clientX, y: event.clientY, selectedIds: nextSelectedIds }); }} /></div>)}
             </div>
           </TransformComponent>
         </div>

@@ -78,6 +78,26 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
     setContextMenu(null);
   };
 
+  const distributeSelectedVertically = () => {
+    if (selectedIds.length < 2) return;
+    const selectedProducts = products
+      .filter((product) => selectedIds.includes(product.productId))
+      .sort((a, b) => a.y - b.y || a.x - b.x);
+    const firstY = selectedProducts[0]?.y;
+    if (firstY === undefined) return;
+    const chipHeight = canvasRef.current?.querySelector<HTMLElement>(".product-chip")?.offsetHeight ?? 40;
+    const gap = 5;
+    const nextProducts = products.map((product) => {
+      const index = selectedProducts.findIndex((item) => item.productId === product.productId);
+      return index < 0 ? product : { ...product, y: firstY + index * (chipHeight + gap) };
+    });
+    onProductsChange(nextProducts);
+    void updateProductPositionsAction({ branchId, positions: nextProducts.filter((product) => selectedIds.includes(product.productId)).map(({ productId, x, y }) => ({ productId, x, y })) }).then((result) => {
+      if (!result.ok) onProductsChange(products);
+    });
+    setContextMenu(null);
+  };
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.target instanceof HTMLElement && (event.target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(event.target.tagName))) return;
@@ -242,6 +262,7 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
       <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-400" disabled={contextMenu.selectedIds.length < 2} onClick={() => alignSelected("left")}>Căn trái theo chiều dọc</button>
       <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-400" disabled={contextMenu.selectedIds.length < 2} onClick={() => alignSelected("right")}>Căn phải theo chiều dọc</button>
       <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-400" disabled={contextMenu.selectedIds.length < 2} onClick={() => alignSelected("center")}>Căn giữa theo chiều dọc</button>
+      <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-400" disabled={contextMenu.selectedIds.length < 2} onClick={distributeSelectedVertically}>Xếp dọc, cách nhau 5px</button>
       {products.find((product) => product.productId === contextMenu.productId)?.groupId && <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100" onClick={() => { const group = products.find((product) => product.productId === contextMenu.productId)?.groupId; const ids = products.filter((product) => product.groupId === group).map((product) => product.productId); void setProductLayoutsGroupAction({ branchId, productIds: ids, groupId: null }).then((result) => { if (result.ok) onProductsChange(products.map((product) => ids.includes(product.productId) ? { ...product, groupId: null } : product)); }); setContextMenu(null); }}>Ungroup</button>}
     </div>}
     {dragging && <TrashDropZone />}

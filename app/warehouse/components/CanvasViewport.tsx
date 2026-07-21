@@ -14,11 +14,12 @@ function TrashDropZone() {
   return <div ref={setNodeRef} className={`touch-trash-zone fixed bottom-5 left-1/2 z-30 -translate-x-1/2 rounded-full px-6 py-3 text-sm font-semibold shadow-lg transition ${isOver ? "bg-red-600 text-white scale-110" : "bg-slate-900/90 text-white"}`}>🗑️ {isOver ? "Thả để xóa" : "Kéo vào đây để xóa"}</div>;
 }
 
-function DraggableProduct({ product, scale, selected, groupDelta, isTouchDevice, onSelect, onContextMenu, onLongPress }: { product: CanvasProduct; scale: number; selected: boolean; groupDelta: { x: number; y: number } | null; isTouchDevice: boolean; onSelect: (event: { shiftKey: boolean }) => void; onContextMenu: (event: React.MouseEvent) => void; onLongPress: (x: number, y: number) => void }) {
+function DraggableProduct({ product, scale, selected, groupDelta, onSelect, onContextMenu, onLongPress }: { product: CanvasProduct; scale: number; selected: boolean; groupDelta: { x: number; y: number } | null; onSelect: (event: { shiftKey: boolean; touch?: boolean }) => void; onContextMenu: (event: React.MouseEvent) => void; onLongPress: (x: number, y: number) => void }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: product.productId });
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pointerStart = useRef<{ x: number; y: number } | null>(null);
   const longPressTriggered = useRef(false);
+  const lastPointerWasTouch = useRef(false);
   const deltaX = isDragging ? (transform?.x ?? 0) / scale : (groupDelta?.x ?? 0);
   const deltaY = isDragging ? (transform?.y ?? 0) / scale : (groupDelta?.y ?? 0);
   const clearLongPress = () => {
@@ -32,7 +33,8 @@ function DraggableProduct({ product, scale, selected, groupDelta, isTouchDevice,
       {...attributes}
       onPointerDown={(event) => {
         listeners?.onPointerDown?.(event);
-        if (!isTouchDevice || event.pointerType === "mouse") return;
+        lastPointerWasTouch.current = event.pointerType !== "mouse";
+        if (event.pointerType === "mouse") return;
         pointerStart.current = { x: event.clientX, y: event.clientY };
         longPressTriggered.current = false;
         clearLongPress();
@@ -46,14 +48,23 @@ function DraggableProduct({ product, scale, selected, groupDelta, isTouchDevice,
         if (Math.hypot(event.clientX - pointerStart.current.x, event.clientY - pointerStart.current.y) > 8) clearLongPress();
       }}
       onPointerUp={(event) => {
-        if (!isTouchDevice || event.pointerType === "mouse") return;
+        if (event.pointerType === "mouse") return;
         const start = pointerStart.current;
         pointerStart.current = null;
         clearLongPress();
-        if (!longPressTriggered.current && start && Math.hypot(event.clientX - start.x, event.clientY - start.y) <= 8) onSelect({ shiftKey: false });
+        if (!longPressTriggered.current && start && Math.hypot(event.clientX - start.x, event.clientY - start.y) <= 8) {
+          event.preventDefault();
+          onSelect({ shiftKey: false, touch: true });
+        }
       }}
       onPointerCancel={() => { pointerStart.current = null; clearLongPress(); }}
-      onClick={isTouchDevice ? undefined : onSelect}
+      onClick={(event) => {
+        if (lastPointerWasTouch.current) {
+          lastPointerWasTouch.current = false;
+          return;
+        }
+        onSelect(event);
+      }}
       onContextMenu={onContextMenu}
       data-product-id={product.productId}
       className={`product-chip absolute min-w-48 touch-none rounded-lg border px-3 py-2 text-sm font-medium text-white shadow-sm transition-[filter,box-shadow] ${selected ? "border-yellow-300 brightness-125 saturate-150 ring-4 ring-yellow-300/80 ring-offset-2 ring-offset-slate-50" : "border-slate-200"}`}
@@ -290,7 +301,7 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
           </div>
           <TransformComponent wrapperClass="!h-full !w-full" contentClass="!h-full !w-full">
             <div className="relative h-[10000px] w-[10000px]">
-              {products.map((product) => <div key={product.productId} onFocus={() => setActiveProductId(product.productId)}><DraggableProduct product={product} scale={instance.transformState.scale} selected={selectedIds.includes(product.productId)} groupDelta={dragPreview?.ids.includes(product.productId) ? { x: dragPreview.x, y: dragPreview.y } : null} isTouchDevice={isTouchDevice} onSelect={(event) => { if (isTouchDevice) { const now = Date.now(); const previousTap = lastTouchTap.current; const isSecondChipTap = previousTap && previousTap.productId !== product.productId && now - previousTap.at < 700; setSelectedIds((ids) => isSecondChipTap ? Array.from(new Set([...ids, product.productId])) : [product.productId]); lastTouchTap.current = { productId: product.productId, at: now }; return; } setSelectedIds((ids) => event.shiftKey ? (ids.includes(product.productId) ? ids.filter((id) => id !== product.productId) : [...ids, product.productId]) : [product.productId]); }} onLongPress={(x, y) => { const nextSelectedIds = selectedIds.includes(product.productId) ? selectedIds : [product.productId]; setSelectedIds(nextSelectedIds); setContextMenu({ productId: product.productId, x, y, selectedIds: nextSelectedIds }); }} onContextMenu={(event) => { event.preventDefault(); const nextSelectedIds = selectedIds.includes(product.productId) ? selectedIds : [product.productId]; setSelectedIds(nextSelectedIds); setContextMenu({ productId: product.productId, x: event.clientX, y: event.clientY, selectedIds: nextSelectedIds }); }} /></div>)}
+              {products.map((product) => <div key={product.productId} onFocus={() => setActiveProductId(product.productId)}><DraggableProduct product={product} scale={instance.transformState.scale} selected={selectedIds.includes(product.productId)} groupDelta={dragPreview?.ids.includes(product.productId) ? { x: dragPreview.x, y: dragPreview.y } : null} onSelect={(event) => { if (event.touch) { const now = Date.now(); const previousTap = lastTouchTap.current; const isSecondChipTap = previousTap && previousTap.productId !== product.productId && now - previousTap.at < 700; setSelectedIds((ids) => isSecondChipTap ? Array.from(new Set([...ids, product.productId])) : [product.productId]); lastTouchTap.current = { productId: product.productId, at: now }; return; } setSelectedIds((ids) => event.shiftKey ? (ids.includes(product.productId) ? ids.filter((id) => id !== product.productId) : [...ids, product.productId]) : [product.productId]); }} onLongPress={(x, y) => { const nextSelectedIds = selectedIds.includes(product.productId) ? selectedIds : [product.productId]; setSelectedIds(nextSelectedIds); setContextMenu({ productId: product.productId, x, y, selectedIds: nextSelectedIds }); }} onContextMenu={(event) => { event.preventDefault(); const nextSelectedIds = selectedIds.includes(product.productId) ? selectedIds : [product.productId]; setSelectedIds(nextSelectedIds); setContextMenu({ productId: product.productId, x: event.clientX, y: event.clientY, selectedIds: nextSelectedIds }); }} /></div>)}
             </div>
           </TransformComponent>
         </div>

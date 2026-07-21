@@ -70,11 +70,17 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
         setContextMenu(null);
         return;
       }
-      if (usesCommand && event.key.toLowerCase() === "g" && selectedIds.length > 1) {
+      if (usesCommand && event.key.toLowerCase() === "g" && (selectedIds.length > 1 || (event.shiftKey && selectedIds.some((id) => products.find((product) => product.productId === id)?.groupId)))) {
         event.preventDefault();
+        const groupedIds = event.shiftKey
+          ? products.filter((product) => selectedIds.includes(product.productId) && product.groupId).map((product) => product.groupId as string)
+          : [];
+        const ids = event.shiftKey && groupedIds.length
+          ? products.filter((product) => product.groupId && groupedIds.includes(product.groupId)).map((product) => product.productId)
+          : selectedIds;
         const groupId = event.shiftKey ? null : crypto.randomUUID();
-        void setProductLayoutsGroupAction({ branchId, productIds: selectedIds, groupId }).then((result) => {
-          if (result.ok) onProductsChange(products.map((product) => selectedIds.includes(product.productId) ? { ...product, groupId } : product));
+        void setProductLayoutsGroupAction({ branchId, productIds: ids, groupId }).then((result) => {
+          if (result.ok) onProductsChange(products.map((product) => ids.includes(product.productId) ? { ...product, groupId } : product));
         });
         return;
       }

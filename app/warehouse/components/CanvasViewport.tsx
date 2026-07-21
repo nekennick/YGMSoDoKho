@@ -54,22 +54,16 @@ export function CanvasViewport({ products, onProductsChange }: { products: Canva
       minScale={0.2}
       maxScale={5}
       initialScale={1}
-      wheel={{ disabled: true }}
+      centerOnInit
+      centerZoomedOut
+      limitToBounds={false}
+      wheel={{ disabled: false, activationKeys: ["Control"], step: 0.1, smoothStep: 0.01 }}
       panning={{ disabled: !spacePressed, excluded: ["product-chip"] }}
       doubleClick={{ disabled: true }}
     >
-      {({ resetTransform, zoomIn, zoomOut, instance }) => (
+      {({ resetTransform, instance }) => (
         <div
           className={`relative h-full overflow-hidden bg-slate-50 ${spacePressed ? "cursor-grab" : "cursor-default"}`}
-          onWheel={(event) => {
-            if (!event.ctrlKey) return;
-            event.preventDefault();
-            if (event.deltaY < 0) {
-              zoomIn(0.15);
-            } else {
-              zoomOut(0.15);
-            }
-          }}
           onMouseDown={(event) => {
             if (event.button !== 1) return;
             event.preventDefault();

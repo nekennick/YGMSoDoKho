@@ -2,6 +2,7 @@ export type ProductLayoutRecord = {
   id: string;
   productId: number;
   branchId: number;
+  zone: string;
   groupId?: string | null;
   x: number;
   y: number;
@@ -13,6 +14,7 @@ export type ProductLayoutRecord = {
 export type CreateProductLayoutInput = {
   productId: number;
   branchId: number;
+  zone: string;
   x: number;
   y: number;
   color?: string;
@@ -21,6 +23,7 @@ export type CreateProductLayoutInput = {
 export type UpdateProductPositionInput = {
   productId: number;
   branchId: number;
+  zone: string;
   x: number;
   y: number;
 };
@@ -28,5 +31,6 @@ export type UpdateProductPositionInput = {
 export type UpdateProductColorInput = {
   productId: number;
   branchId: number;
+  zone: string;
   color: string;
 };

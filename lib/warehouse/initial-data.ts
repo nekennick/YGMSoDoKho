@@ -6,7 +6,7 @@ export type WarehouseDataResult =
   | { ok: true; data: WarehouseInitialData }
   | { ok: false; code: "CONFIG" | "DATABASE" | "KIOTVIET" | "UNKNOWN"; message: string };
 
-export async function loadWarehouseInitialData(branchId: number): Promise<WarehouseDataResult> {
+export async function loadWarehouseInitialData(branchId: number, zone: string): Promise<WarehouseDataResult> {
   let catalogService: ReturnType<typeof getProductCatalogService>;
   try {
     catalogService = getProductCatalogService(branchId);
@@ -15,7 +15,7 @@ export async function loadWarehouseInitialData(branchId: number): Promise<Wareho
     return { ok: false, code: "CONFIG", message: "Thiếu hoặc sai biến môi trường KiotViet trên Vercel." };
   }
   try {
-    const [catalogResult, layoutResult] = await Promise.allSettled([catalogService.listProducts(), listProductLayouts(branchId)]);
+    const [catalogResult, layoutResult] = await Promise.allSettled([catalogService.listProducts(), listProductLayouts(branchId, zone)]);
     if (catalogResult.status === "rejected") throw Object.assign(catalogResult.reason, { source: "KIOTVIET" });
     if (layoutResult.status === "rejected") throw Object.assign(layoutResult.reason, { source: "DATABASE" });
     const products = catalogResult.value;

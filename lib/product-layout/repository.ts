@@ -10,13 +10,13 @@ function toRecord(layout: ProductLayoutRecord): ProductLayoutRecord {
   return layout;
 }
 
-export async function listProductLayouts(branchId: number): Promise<ProductLayoutRecord[]> {
-  const layouts = await prisma.productLayout.findMany({ where: { branchId }, orderBy: { createdAt: "asc" } });
+export async function listProductLayouts(branchId: number, zone: string): Promise<ProductLayoutRecord[]> {
+  const layouts = await prisma.productLayout.findMany({ where: { branchId, zone }, orderBy: { createdAt: "asc" } });
   return layouts.map(toRecord);
 }
 
-export async function findProductLayout(productId: number, branchId: number): Promise<ProductLayoutRecord | null> {
-  const layout = await prisma.productLayout.findUnique({ where: { branchId_productId: { branchId, productId } } });
+export async function findProductLayout(productId: number, branchId: number, zone: string): Promise<ProductLayoutRecord | null> {
+  const layout = await prisma.productLayout.findUnique({ where: { branchId_zone_productId: { branchId, zone, productId } } });
   return layout ? toRecord(layout) : null;
 }
 
@@ -25,6 +25,7 @@ export async function createProductLayout(input: CreateProductLayoutInput): Prom
     data: {
       productId: input.productId,
       branchId: input.branchId,
+      zone: input.zone,
       x: input.x,
       y: input.y,
       ...(input.color === undefined ? {} : { color: input.color }),
@@ -35,7 +36,7 @@ export async function createProductLayout(input: CreateProductLayoutInput): Prom
 
 export async function updateProductPosition(input: UpdateProductPositionInput): Promise<ProductLayoutRecord> {
   const layout = await prisma.productLayout.update({
-    where: { branchId_productId: { branchId: input.branchId, productId: input.productId } },
+    where: { branchId_zone_productId: { branchId: input.branchId, zone: input.zone, productId: input.productId } },
     data: { x: input.x, y: input.y },
   });
   return toRecord(layout);
@@ -43,23 +44,23 @@ export async function updateProductPosition(input: UpdateProductPositionInput): 
 
 export async function updateProductPositions(inputs: UpdateProductPositionInput[]): Promise<void> {
   await prisma.$transaction(inputs.map((input) => prisma.productLayout.update({
-    where: { branchId_productId: { branchId: input.branchId, productId: input.productId } },
+    where: { branchId_zone_productId: { branchId: input.branchId, zone: input.zone, productId: input.productId } },
     data: { x: input.x, y: input.y },
   })));
 }
 
 export async function updateProductColor(input: UpdateProductColorInput): Promise<ProductLayoutRecord> {
   const layout = await prisma.productLayout.update({
-    where: { branchId_productId: { branchId: input.branchId, productId: input.productId } },
+    where: { branchId_zone_productId: { branchId: input.branchId, zone: input.zone, productId: input.productId } },
     data: { color: input.color },
   });
   return toRecord(layout);
 }
 
-export async function deleteProductLayout(productId: number, branchId: number): Promise<void> {
-  await prisma.productLayout.delete({ where: { branchId_productId: { branchId, productId } } });
+export async function deleteProductLayout(productId: number, branchId: number, zone: string): Promise<void> {
+  await prisma.productLayout.delete({ where: { branchId_zone_productId: { branchId, zone, productId } } });
 }
 
-export async function setProductLayoutsGroup(productIds: number[], branchId: number, groupId: string | null): Promise<void> {
-  await prisma.productLayout.updateMany({ where: { branchId, productId: { in: productIds } }, data: { groupId } });
+export async function setProductLayoutsGroup(productIds: number[], branchId: number, zone: string, groupId: string | null): Promise<void> {
+  await prisma.productLayout.updateMany({ where: { branchId, zone, productId: { in: productIds } }, data: { groupId } });
 }

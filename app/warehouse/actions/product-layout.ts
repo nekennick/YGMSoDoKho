@@ -11,6 +11,7 @@ import { getProductCatalogService } from "@/lib/warehouse/catalog-service";
 const updatePositionSchema = z.object({
   productId: z.number().int().positive(),
   branchId: z.number().int().positive(),
+  zone: z.string().min(1),
   x: z.number().finite(),
   y: z.number().finite(),
 });
@@ -26,6 +27,7 @@ export type CreateProductLayoutActionResult =
 const createLayoutSchema = z.object({
   productId: z.number().int().positive(),
   branchId: z.number().int().positive(),
+  zone: z.string().min(1),
   x: z.number().finite(),
   y: z.number().finite(),
 });
@@ -61,32 +63,32 @@ export async function updateProductPositionAction(input: unknown): Promise<Produ
   }
 }
 
-const batchPositionSchema = z.object({ branchId: z.number().int().positive(), positions: z.array(z.object({ productId: z.number().int().positive(), x: z.number().finite(), y: z.number().finite() })).min(1) });
+const batchPositionSchema = z.object({ branchId: z.number().int().positive(), zone: z.string().min(1), positions: z.array(z.object({ productId: z.number().int().positive(), x: z.number().finite(), y: z.number().finite() })).min(1) });
 export async function updateProductPositionsAction(input: unknown): Promise<{ ok: true } | { ok: false; message: string }> {
   const parsed = batchPositionSchema.safeParse(input);
   if (!parsed.success) return { ok: false, message: "Vị trí nhóm không hợp lệ." };
-  try { await updateProductPositions(parsed.data.positions.map((position) => ({ ...position, branchId: parsed.data.branchId }))); return { ok: true }; } catch { return { ok: false, message: "Không thể lưu vị trí nhóm." }; }
+  try { await updateProductPositions(parsed.data.positions.map((position) => ({ ...position, branchId: parsed.data.branchId, zone: parsed.data.zone }))); return { ok: true }; } catch { return { ok: false, message: "Không thể lưu vị trí nhóm." }; }
 }
 
-const deleteLayoutSchema = z.object({ productId: z.number().int().positive(), branchId: z.number().int().positive() });
+const deleteLayoutSchema = z.object({ productId: z.number().int().positive(), branchId: z.number().int().positive(), zone: z.string().min(1) });
 
 export async function deleteProductLayoutAction(input: unknown): Promise<{ ok: true } | { ok: false; message: string }> {
   const parsed = deleteLayoutSchema.safeParse(input);
   if (!parsed.success) return { ok: false, message: "Sản phẩm không hợp lệ." };
   try {
-    await deleteProductLayout(parsed.data.productId, parsed.data.branchId);
+    await deleteProductLayout(parsed.data.productId, parsed.data.branchId, parsed.data.zone);
     return { ok: true };
   } catch {
     return { ok: false, message: "Không thể xóa sản phẩm khỏi canvas." };
   }
 }
 
-const groupSchema = z.object({ productIds: z.array(z.number().int().positive()).min(1), branchId: z.number().int().positive(), groupId: z.string().nullable() });
+const groupSchema = z.object({ productIds: z.array(z.number().int().positive()).min(1), branchId: z.number().int().positive(), zone: z.string().min(1), groupId: z.string().nullable() });
 export async function setProductLayoutsGroupAction(input: unknown): Promise<{ ok: true; groupId: string | null } | { ok: false; message: string }> {
   const parsed = groupSchema.safeParse(input);
   if (!parsed.success) return { ok: false, message: "Nhóm sản phẩm không hợp lệ." };
   try {
-    await setProductLayoutsGroup(parsed.data.productIds, parsed.data.branchId, parsed.data.groupId);
+    await setProductLayoutsGroup(parsed.data.productIds, parsed.data.branchId, parsed.data.zone, parsed.data.groupId);
     return { ok: true, groupId: parsed.data.groupId };
   } catch {
     return { ok: false, message: "Không thể cập nhật nhóm sản phẩm." };

@@ -38,6 +38,11 @@ function DraggableProduct({ product, scale, selected, groupDelta, dragDisabled, 
       {...listeners}
       {...attributes}
       onPointerDown={(event) => {
+        if (event.pointerType === "touch" && event.currentTarget.closest<HTMLElement>("[data-multi-touch='true']")) {
+          clearLongPress();
+          pointerStart.current = null;
+          return;
+        }
         listeners?.onPointerDown?.(event);
         if (event.pointerType === "mouse") return;
         pointerStart.current = { x: event.clientX, y: event.clientY };
@@ -86,7 +91,7 @@ function DraggableProduct({ product, scale, selected, groupDelta, dragDisabled, 
   );
 }
 
-export function CanvasViewport({ products, branchId, onProductsChange, onRequestAdd, onRegisterCenterPosition, focusProductId }: { products: CanvasProduct[]; branchId: number; onProductsChange: (products: CanvasProduct[]) => void; onRequestAdd: () => void; onRegisterCenterPosition?: (getter: (() => { x: number; y: number }) | null) => void; focusProductId?: number | null }) {
+export function CanvasViewport({ products, branchId, zone, onProductsChange, onRequestAdd, onRegisterCenterPosition, focusProductId }: { products: CanvasProduct[]; branchId: number; zone: string; onProductsChange: (products: CanvasProduct[]) => void; onRequestAdd: () => void; onRegisterCenterPosition?: (getter: (() => { x: number; y: number }) | null) => void; focusProductId?: number | null }) {
   const { spacePressed } = useKeyboard();
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
   const [dragging, setDragging] = useState(false);
@@ -185,7 +190,7 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
       return { ...product, x };
     });
     onProductsChange(nextProducts);
-    void updateProductPositionsAction({ branchId, positions: nextProducts.filter((product) => selectedIds.includes(product.productId)).map(({ productId, x, y }) => ({ productId, x, y })) }).then((result) => {
+    void updateProductPositionsAction({ branchId, zone, positions: nextProducts.filter((product) => selectedIds.includes(product.productId)).map(({ productId, x, y }) => ({ productId, x, y })) }).then((result) => {
       if (!result.ok) onProductsChange(products);
     });
     setContextMenu(null);
@@ -205,7 +210,7 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
       return index < 0 ? product : { ...product, y: firstY + index * (chipHeight + gap) };
     });
     onProductsChange(nextProducts);
-    void updateProductPositionsAction({ branchId, positions: nextProducts.filter((product) => selectedIds.includes(product.productId)).map(({ productId, x, y }) => ({ productId, x, y })) }).then((result) => {
+    void updateProductPositionsAction({ branchId, zone, positions: nextProducts.filter((product) => selectedIds.includes(product.productId)).map(({ productId, x, y }) => ({ productId, x, y })) }).then((result) => {
       if (!result.ok) onProductsChange(products);
     });
     setContextMenu(null);
@@ -237,7 +242,7 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
           ? products.filter((product) => product.groupId && groupedIds.includes(product.groupId)).map((product) => product.productId)
           : selectedIds;
         const groupId = event.shiftKey ? null : crypto.randomUUID();
-        void setProductLayoutsGroupAction({ branchId, productIds: ids, groupId }).then((result) => {
+        void setProductLayoutsGroupAction({ branchId, zone, productIds: ids, groupId }).then((result) => {
           if (result.ok) onProductsChange(products.map((product) => ids.includes(product.productId) ? { ...product, groupId } : product));
         });
         return;
@@ -246,7 +251,7 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
         const ids = selectedIds.length ? selectedIds : (activeProductId === null ? [] : [activeProductId]);
         if (!ids.length) return;
         event.preventDefault();
-        void Promise.all(ids.map((productId) => deleteProductLayoutAction({ productId, branchId }))).then((results) => {
+        void Promise.all(ids.map((productId) => deleteProductLayoutAction({ productId, branchId, zone }))).then((results) => {
           if (results.every((result) => result.ok)) {
             onProductsChange(products.filter((product) => !ids.includes(product.productId)));
             setSelectedIds([]);
@@ -262,12 +267,12 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
         const dy = event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
         const nextProducts = products.map((product) => selectedIds.includes(product.productId) ? { ...product, x: product.x + dx, y: product.y + dy } : product);
         onProductsChange(nextProducts);
-        void updateProductPositionsAction({ branchId, positions: nextProducts.filter((product) => selectedIds.includes(product.productId)).map(({ productId, x, y }) => ({ productId, x, y })) });
+        void updateProductPositionsAction({ branchId, zone, positions: nextProducts.filter((product) => selectedIds.includes(product.productId)).map(({ productId, x, y }) => ({ productId, x, y })) });
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [activeProductId, branchId, onProductsChange, products, selectedIds]);
+  }, [activeProductId, branchId, onProductsChange, products, selectedIds, zone]);
 
   useEffect(() => {
     const onMove = (event: PointerEvent) => {
@@ -315,13 +320,13 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
       const nextProducts = products.map((product) => movingIds.includes(product.productId) ? { ...product, x: product.x + dx, y: product.y + dy } : product);
       onProductsChange(nextProducts);
       if (event.over?.id === "trash-zone") {
-        const result = await Promise.all(movingIds.map((id) => deleteProductLayoutAction({ productId: id, branchId })));
+        const result = await Promise.all(movingIds.map((id) => deleteProductLayoutAction({ productId: id, branchId, zone })));
         if (result.every((item) => item.ok)) onProductsChange(products.filter((item) => !movingIds.includes(item.productId)));
         return;
       }
       const result = movingIds.length > 1
-        ? await updateProductPositionsAction({ branchId, positions: nextProducts.filter((item) => movingIds.includes(item.productId)).map(({ productId: id, x, y }) => ({ productId: id, x, y })) })
-        : await updateProductPositionAction({ productId, branchId, x: nextProducts.find((item) => item.productId === productId)?.x ?? previous.x, y: nextProducts.find((item) => item.productId === productId)?.y ?? previous.y });
+        ? await updateProductPositionsAction({ branchId, zone, positions: nextProducts.filter((item) => movingIds.includes(item.productId)).map(({ productId: id, x, y }) => ({ productId: id, x, y })) })
+        : await updateProductPositionAction({ productId, branchId, zone, x: nextProducts.find((item) => item.productId === productId)?.x ?? previous.x, y: nextProducts.find((item) => item.productId === productId)?.y ?? previous.y });
       if (!result.ok) {
         onProductsChange(products);
       }
@@ -335,7 +340,7 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
       centerZoomedOut={false}
       limitToBounds={false}
       wheel={{ disabled: false, activationKeys: ["Control"], step: 0.1, smoothStep: 0.01 }}
-      panning={{ disabled: !spacePressed, excluded: ["product-chip"] }}
+      panning={{ disabled: !spacePressed && !multiTouchGesture, excluded: spacePressed || multiTouchGesture ? [] : ["product-chip"] }}
       doubleClick={{ disabled: true }}
     >
       {({ resetTransform, instance }) => (
@@ -348,6 +353,7 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
             if (activeTouchPointers.current.size >= 2) {
               multiTouchGestureRef.current = true;
               setMultiTouchGesture(true);
+              event.currentTarget.dataset.multiTouch = "true";
             }
           }}
           onPointerUpCapture={(event) => {
@@ -357,6 +363,7 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
               window.setTimeout(() => {
                 multiTouchGestureRef.current = false;
                 setMultiTouchGesture(false);
+                if (canvasRef.current) delete canvasRef.current.dataset.multiTouch;
               }, 120);
             }
           }}
@@ -366,6 +373,7 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
             if (activeTouchPointers.current.size === 0) {
               multiTouchGestureRef.current = false;
               setMultiTouchGesture(false);
+              delete event.currentTarget.dataset.multiTouch;
             }
           }}
           onPointerDown={(event) => { const target = event.target instanceof HTMLElement ? event.target : null; if (!isTouchDevice && !spacePressed && event.button === 0 && !target?.closest(".product-chip")) { const rect = event.currentTarget.getBoundingClientRect(); selectionStart.current = { x: event.clientX - rect.left, y: event.clientY - rect.top }; selectionMoved.current = false; } }}
@@ -400,9 +408,10 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
                     scale={instance.transformState.scale}
                     selected={selectedIds.includes(product.productId)}
                     groupDelta={dragPreview?.ids.includes(product.productId) ? { x: dragPreview.x, y: dragPreview.y } : null}
-                    dragDisabled={mobileMultiSelect}
+                    dragDisabled={mobileMultiSelect || spacePressed || multiTouchGesture}
                     multiTouchGesture={multiTouchGesture}
                     onSelect={(shift) => {
+                      if (spacePressed) return;
                       setContextMenu(null);
                       setActiveProductId(product.productId);
                       setSelectedIds((ids) => {
@@ -435,13 +444,13 @@ export function CanvasViewport({ products, branchId, onProductsChange, onRequest
       )}
     </TransformWrapper>
     {contextMenu && <div className="fixed z-50 rounded-md border bg-white py-1 text-sm shadow-lg" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={(event) => event.stopPropagation()}>
-      <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100" disabled={contextMenu.selectedIds.length < 2} onClick={() => { const ids = contextMenu.selectedIds; const groupId = crypto.randomUUID(); void setProductLayoutsGroupAction({ branchId, productIds: ids, groupId }).then((result) => { if (result.ok) onProductsChange(products.map((product) => ids.includes(product.productId) ? { ...product, groupId } : product)); }); setContextMenu(null); }}>Group ({contextMenu.selectedIds.length})</button>
+      <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100" disabled={contextMenu.selectedIds.length < 2} onClick={() => { const ids = contextMenu.selectedIds; const groupId = crypto.randomUUID(); void setProductLayoutsGroupAction({ branchId, zone, productIds: ids, groupId }).then((result) => { if (result.ok) onProductsChange(products.map((product) => ids.includes(product.productId) ? { ...product, groupId } : product)); }); setContextMenu(null); }}>Group ({contextMenu.selectedIds.length})</button>
       <div className="my-1 border-t" />
       <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-400" disabled={contextMenu.selectedIds.length < 2} onClick={() => alignSelected("left")}>Căn trái theo chiều dọc</button>
       <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-400" disabled={contextMenu.selectedIds.length < 2} onClick={() => alignSelected("right")}>Căn phải theo chiều dọc</button>
       <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-400" disabled={contextMenu.selectedIds.length < 2} onClick={() => alignSelected("center")}>Căn giữa theo chiều dọc</button>
       <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-400" disabled={contextMenu.selectedIds.length < 2} onClick={distributeSelectedVertically}>Xếp dọc, cách nhau 5px</button>
-      {products.find((product) => product.productId === contextMenu.productId)?.groupId && <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100" onClick={() => { const group = products.find((product) => product.productId === contextMenu.productId)?.groupId; const ids = products.filter((product) => product.groupId === group).map((product) => product.productId); void setProductLayoutsGroupAction({ branchId, productIds: ids, groupId: null }).then((result) => { if (result.ok) onProductsChange(products.map((product) => ids.includes(product.productId) ? { ...product, groupId: null } : product)); }); setContextMenu(null); }}>Ungroup</button>}
+      {products.find((product) => product.productId === contextMenu.productId)?.groupId && <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100" onClick={() => { const group = products.find((product) => product.productId === contextMenu.productId)?.groupId; const ids = products.filter((product) => product.groupId === group).map((product) => product.productId); void setProductLayoutsGroupAction({ branchId, zone, productIds: ids, groupId: null }).then((result) => { if (result.ok) onProductsChange(products.map((product) => ids.includes(product.productId) ? { ...product, groupId: null } : product)); }); setContextMenu(null); }}>Ungroup</button>}
     </div>}
     {dragging && trashVisible && <TrashDropZone />}
     </DndContext>

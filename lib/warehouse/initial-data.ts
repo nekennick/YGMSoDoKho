@@ -1,4 +1,4 @@
-import { listProductLayouts } from "@/lib/product-layout/repository";
+import { listProductLayoutsByBranch } from "@/lib/product-layout/repository";
 import { getProductCatalogService } from "@/lib/warehouse/catalog-service";
 import { mergeCatalogAndLayouts, type WarehouseInitialData } from "@/lib/product-catalog/merge";
 
@@ -15,12 +15,14 @@ export async function loadWarehouseInitialData(branchId: number, zone: string): 
     return { ok: false, code: "CONFIG", message: "Thiếu hoặc sai biến môi trường KiotViet trên Vercel." };
   }
   try {
-    const [catalogResult, layoutResult] = await Promise.allSettled([catalogService.listProducts(), listProductLayouts(branchId, zone)]);
+    const [catalogResult, layoutResult] = await Promise.allSettled([catalogService.listProducts(), listProductLayoutsByBranch(branchId)]);
     if (catalogResult.status === "rejected") throw Object.assign(catalogResult.reason, { source: "KIOTVIET" });
     if (layoutResult.status === "rejected") throw Object.assign(layoutResult.reason, { source: "DATABASE" });
     const products = catalogResult.value;
-    const layouts = layoutResult.value;
-    return { ok: true, data: mergeCatalogAndLayouts(products, layouts) };
+    const branchLayouts = layoutResult.value;
+    const currentZoneLayouts = branchLayouts.filter((layout) => layout.zone === zone);
+    const unavailableProductIds = new Set(branchLayouts.map((layout) => layout.productId));
+    return { ok: true, data: mergeCatalogAndLayouts(products, currentZoneLayouts, unavailableProductIds) };
   } catch (error) {
     const source = error && typeof error === "object" && "source" in error ? error.source : "UNKNOWN";
     console.error("Failed to load warehouse data", {

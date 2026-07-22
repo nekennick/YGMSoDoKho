@@ -15,6 +15,16 @@ export async function listProductLayouts(branchId: number, zone: string): Promis
   return layouts.map(toRecord);
 }
 
+export async function listProductLayoutsByBranch(branchId: number): Promise<ProductLayoutRecord[]> {
+  const layouts = await prisma.productLayout.findMany({ where: { branchId }, orderBy: { createdAt: "asc" } });
+  return layouts.map(toRecord);
+}
+
+export async function findProductLayoutInBranch(productId: number, branchId: number): Promise<ProductLayoutRecord | null> {
+  const layout = await prisma.productLayout.findUnique({ where: { branchId_productId: { branchId, productId } } });
+  return layout ? toRecord(layout) : null;
+}
+
 export async function findProductLayout(productId: number, branchId: number, zone: string): Promise<ProductLayoutRecord | null> {
   const layout = await prisma.productLayout.findUnique({ where: { branchId_zone_productId: { branchId, zone, productId } } });
   return layout ? toRecord(layout) : null;

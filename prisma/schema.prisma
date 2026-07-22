@@ -20,4 +20,5 @@ model ProductLayout {
   createdAt DateTime @default(now())
 
   @@unique([branchId, zone, productId])
+  @@unique([branchId, productId])
 }

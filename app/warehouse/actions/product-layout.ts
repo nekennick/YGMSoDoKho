@@ -5,6 +5,7 @@ import { updateProductPosition } from "@/lib/product-layout/repository";
 import { updateProductPositions } from "@/lib/product-layout/repository";
 import { createProductLayout } from "@/lib/product-layout/repository";
 import { deleteProductLayout } from "@/lib/product-layout/repository";
+import { findProductLayoutInBranch } from "@/lib/product-layout/repository";
 import { setProductLayoutsGroup } from "@/lib/product-layout/repository";
 import { getProductCatalogService } from "@/lib/warehouse/catalog-service";
 
@@ -36,13 +37,17 @@ export async function createProductLayoutAction(input: unknown): Promise<CreateP
   const parsed = createLayoutSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: { code: "INVALID_INPUT", message: "Sản phẩm không hợp lệ." } };
   try {
+    const existingLayout = await findProductLayoutInBranch(parsed.data.productId, parsed.data.branchId);
+    if (existingLayout) {
+      return { ok: false, error: { code: "DUPLICATE", message: "Sản phẩm đã nằm trong một vùng của kho này." } };
+    }
     const product = await getProductCatalogService(parsed.data.branchId).getProductById(parsed.data.productId);
     if (!product) return { ok: false, error: { code: "NOT_FOUND", message: "Không tìm thấy sản phẩm trên KiotViet." } };
     const layout = await createProductLayout(parsed.data);
     return { ok: true, data: { productId: layout.productId, x: layout.x, y: layout.y, color: layout.color, quantity: product.quantity } };
   } catch (error) {
     const duplicate = error instanceof Error && error.message.includes("Unique constraint");
-    return { ok: false, error: { code: duplicate ? "DUPLICATE" : "PERSISTENCE_ERROR", message: duplicate ? "Sản phẩm đã có trên canvas." : "Không thể thêm sản phẩm." } };
+    return { ok: false, error: { code: duplicate ? "DUPLICATE" : "PERSISTENCE_ERROR", message: duplicate ? "Sản phẩm đã nằm trong một vùng của kho này." : "Không thể thêm sản phẩm." } };
   }
 }
 

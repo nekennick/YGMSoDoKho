@@ -26,6 +26,7 @@ export type WarehouseInitialData = {
 export function mergeCatalogAndLayouts(
   products: readonly ExternalProduct[],
   layouts: readonly ProductLayoutRecord[],
+  unavailableProductIds: ReadonlySet<number> = new Set(layouts.map((layout) => layout.productId)),
 ): WarehouseInitialData {
   const layoutByProductId = new Map(layouts.map((layout) => [layout.productId, layout]));
   const knownProductIds = new Set<number>();
@@ -49,7 +50,7 @@ export function mergeCatalogAndLayouts(
         quantity: product.quantity,
         groupId: layout.groupId,
       });
-    } else {
+    } else if (!unavailableProductIds.has(product.id)) {
       availableProducts.push({ productId: product.id, name: product.name, quantity: product.quantity });
     }
   }

@@ -24,7 +24,7 @@ export default async function WarehousePage({ searchParams }: { searchParams: Pr
           {Object.values(WAREHOUSE_ZONES).map((item) => <Link key={item.id} href={`/warehouse?branch=${warehouse.slug}&zone=${item.id}`} className={`rounded px-2 py-1 ${zone === item.id ? "bg-white font-semibold text-slate-900 shadow-sm" : "text-slate-500"}`}>{item.name}</Link>)}
         </nav>}
       </header>
-      <WarehouseWorkspace result={result} branchId={warehouse.id} zone={zone} />
+      <WarehouseWorkspace key={`${warehouse.id}:${zone}`} result={result} branchId={warehouse.id} zone={zone} />
     </main>
   );
 }

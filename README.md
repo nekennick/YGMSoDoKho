@@ -1,12 +1,12 @@
-# Warehouse Product Layout Editor
+# Trình chỉnh sửa sơ đồ kho
 
-Internal infinite-canvas editor for product display positions. Product metadata is read from KiotViet; the local database will store only `ProductLayout` records.
+Công cụ nội bộ quản lý vị trí hiển thị sản phẩm trên vùng làm việc vô hạn. Toàn bộ thông tin sản phẩm được lấy từ KiotViet; cơ sở dữ liệu cục bộ chỉ lưu các bản ghi `ProductLayout`.
 
-## Development
+## Phát triển
 
 ```bash
 npm install
 npm run dev
 ```
 
-Open <http://localhost:3000/warehouse>.
+Mở <http://localhost:3000/warehouse>.

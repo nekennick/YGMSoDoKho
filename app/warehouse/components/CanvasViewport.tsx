@@ -339,7 +339,8 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onR
       centerOnInit
       centerZoomedOut={false}
       limitToBounds={false}
-      wheel={{ disabled: false, activationKeys: ["Control"], step: 0.1, smoothStep: 0.01 }}
+      smooth
+      wheel={{ disabled: false, activationKeys: ["Control"], step: 0.02, smoothStep: 0.0005 }}
       panning={{ disabled: !spacePressed && !multiTouchGesture, excluded: spacePressed || multiTouchGesture ? [] : ["product-chip"] }}
       doubleClick={{ disabled: true }}
     >

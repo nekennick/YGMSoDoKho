@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Warehouse Layout",
-  description: "Internal product layout editor",
+  title: "Sơ đồ kho",
+  description: "Công cụ nội bộ quản lý sơ đồ vị trí sản phẩm",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

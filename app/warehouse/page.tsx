@@ -14,8 +14,8 @@ export default async function WarehousePage({ searchParams }: { searchParams: Pr
     <main className="flex h-dvh min-h-0 flex-col overflow-hidden overscroll-none bg-slate-100">
       <header className="sticky top-0 z-40 flex h-14 shrink-0 items-center border-b bg-white px-5">
         <div>
-          <p className="text-sm font-semibold text-slate-900">Warehouse Layout · {warehouse.name}</p>
-          <p className="text-xs text-slate-500">Giai đoạn 1 · Nền tảng</p>
+          <p className="text-sm font-semibold text-slate-900">Sơ đồ kho · {warehouse.name}</p>
+          <p className="text-xs text-slate-500">Powered by Khoa Trần</p>
         </div>
         <nav className="ml-auto flex gap-1 rounded-md bg-slate-100 p-1 text-xs">
           {Object.values(WAREHOUSES).map((item) => <Link key={item.slug} href={`/warehouse?branch=${item.slug}`} className={`rounded px-2 py-1 ${item.id === warehouse.id ? "bg-white font-semibold text-slate-900 shadow-sm" : "text-slate-500"}`}>{item.name}</Link>)}

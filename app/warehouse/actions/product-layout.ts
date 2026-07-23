@@ -62,7 +62,7 @@ export async function updateProductPositionAction(input: unknown): Promise<Produ
     return { ok: true, data: { productId: layout.productId, x: layout.x, y: layout.y } };
   } catch (error) {
     const message = error instanceof Error && error.message.includes("Record to update not found")
-      ? "Sản phẩm không còn trên canvas."
+      ? "Sản phẩm không còn trên sơ đồ kho."
       : "Không thể lưu vị trí sản phẩm.";
     return { ok: false, error: { code: message.includes("không còn") ? "NOT_FOUND" : "PERSISTENCE_ERROR", message } };
   }
@@ -84,7 +84,7 @@ export async function deleteProductLayoutAction(input: unknown): Promise<{ ok: t
     await deleteProductLayout(parsed.data.productId, parsed.data.branchId, parsed.data.zone);
     return { ok: true };
   } catch {
-    return { ok: false, message: "Không thể xóa sản phẩm khỏi canvas." };
+    return { ok: false, message: "Không thể xóa sản phẩm khỏi sơ đồ kho." };
   }
 }
 

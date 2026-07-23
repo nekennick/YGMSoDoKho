@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { DndContext, PointerSensor, type DragEndEvent, type DragMoveEvent, type DragStartEvent, useDraggable, useSensor, useSensors } from "@dnd-kit/core";
 import { useDroppable } from "@dnd-kit/core";
 import { TransformComponent, TransformWrapper, type ReactZoomPanPinchRef } from "react-zoom-pan-pinch";
@@ -8,6 +8,15 @@ import type { CanvasProduct } from "@/lib/product-catalog/merge";
 import { useKeyboard } from "@/app/warehouse/hooks/useKeyboard";
 import { updateProductPositionAction, updateProductPositionsAction, setProductLayoutsGroupAction } from "@/app/warehouse/actions/product-layout";
 import { deleteProductLayoutAction } from "@/app/warehouse/actions/product-layout";
+import { WarehouseFloorPlan } from "@/app/warehouse/components/WarehouseFloorPlan";
+import {
+  findNearestValidFloorPlanPosition,
+  getFloorPlanCanvasRect,
+  getWarehouseFloorPlan,
+  isPositionInsideFloorPlan,
+  PRODUCT_CHIP_HEIGHT,
+  PRODUCT_CHIP_WIDTH,
+} from "@/lib/warehouse/floor-plans";
 
 function TrashDropZone() {
   const { isOver, setNodeRef } = useDroppable({ id: "trash-zone" });
@@ -93,6 +102,7 @@ function DraggableProduct({ product, scale, selected, groupDelta, dragDisabled, 
 
 export function CanvasViewport({ products, branchId, zone, onProductsChange, onRequestAdd, onRegisterCenterPosition, focusProductId }: { products: CanvasProduct[]; branchId: number; zone: string; onProductsChange: (products: CanvasProduct[]) => void; onRequestAdd: () => void; onRegisterCenterPosition?: (getter: (() => { x: number; y: number }) | null) => void; focusProductId?: number | null }) {
   const { spacePressed } = useKeyboard();
+  const floorPlan = getWarehouseFloorPlan(branchId, zone);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
   const [dragging, setDragging] = useState(false);
   const [trashVisible, setTrashVisible] = useState(false);
@@ -103,6 +113,7 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onR
   const [contextMenu, setContextMenu] = useState<{ productId: number; x: number; y: number; selectedIds: number[] } | null>(null);
   const [mobileMultiSelect, setMobileMultiSelect] = useState(false);
   const [multiTouchGesture, setMultiTouchGesture] = useState(false);
+  const [floorPlanNotice, setFloorPlanNotice] = useState<string | null>(null);
   const [selectionBox, setSelectionBox] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
   const selectionStart = useRef<{ x: number; y: number } | null>(null);
   const selectionMoved = useRef(false);
@@ -111,12 +122,41 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onR
   const productsRef = useRef(products);
   productsRef.current = products;
 
+  const normalizePosition = useCallback((position: { x: number; y: number }) => (
+    floorPlan ? findNearestValidFloorPlanPosition(floorPlan, position) : position
+  ), [floorPlan]);
+
+  const canPlaceProducts = useCallback((nextProducts: CanvasProduct[], productIds: number[]) => (
+    !floorPlan || nextProducts
+      .filter((product) => productIds.includes(product.productId))
+      .every((product) => isPositionInsideFloorPlan(floorPlan, product))
+  ), [floorPlan]);
+
+  const showInvalidPositionNotice = useCallback(() => {
+    setFloorPlanNotice("Vị trí này nằm ngoài Kho Đông hoặc chạm vào vùng Kho Mát.");
+  }, []);
+
+  useEffect(() => {
+    if (!floorPlanNotice) return;
+    const timer = window.setTimeout(() => setFloorPlanNotice(null), 2600);
+    return () => window.clearTimeout(timer);
+  }, [floorPlanNotice]);
+
   useEffect(() => {
     if (!onRegisterCenterPosition) return;
     onRegisterCenterPosition(() => {
       const viewport = canvasRef.current?.getBoundingClientRect();
       const transform = transformRef.current?.instance.transformState;
-      if (!viewport || !transform || !transform.scale) return { x: 400, y: 250 };
+      if (!viewport || !transform || !transform.scale) {
+        if (floorPlan) {
+          const planRect = getFloorPlanCanvasRect(floorPlan);
+          return normalizePosition({
+            x: planRect.x + planRect.width / 2 - PRODUCT_CHIP_WIDTH / 2,
+            y: planRect.y + planRect.height / 2 - PRODUCT_CHIP_HEIGHT / 2,
+          });
+        }
+        return { x: 400, y: 250 };
+      }
       const anchorProduct = productsRef.current[0];
       const anchorNode = anchorProduct && canvasRef.current?.querySelector<HTMLElement>(`.product-chip[data-product-id="${anchorProduct.productId}"]`);
       if (anchorProduct && anchorNode) {
@@ -125,22 +165,42 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onR
         const anchorHeight = anchorNode.offsetHeight || 40;
         const scaleX = anchorRect.width / anchorWidth;
         const scaleY = anchorRect.height / anchorHeight;
-        const targetScreenX = window.innerWidth / 2;
-        const targetScreenY = window.innerHeight / 2;
+        const targetScreenX = floorPlan ? viewport.left + viewport.width / 2 : window.innerWidth / 2;
+        const targetScreenY = floorPlan ? viewport.top + viewport.height / 2 : window.innerHeight / 2;
         const worldOriginX = anchorRect.left - anchorProduct.x * scaleX;
         const worldOriginY = anchorRect.top - anchorProduct.y * scaleY;
-        return {
+        return normalizePosition({
           x: (targetScreenX - worldOriginX) / scaleX - anchorWidth / 2,
           y: (targetScreenY - worldOriginY) / scaleY - anchorHeight / 2,
-        };
+        });
       }
-      return {
-        x: (window.innerWidth / 2 - viewport.left - transform.positionX) / transform.scale - 128,
-        y: (window.innerHeight / 2 - viewport.top - transform.positionY) / transform.scale - 20,
-      };
+      return normalizePosition({
+        x: (viewport.left + viewport.width / 2 - viewport.left - transform.positionX) / transform.scale - PRODUCT_CHIP_WIDTH / 2,
+        y: (viewport.top + viewport.height / 2 - viewport.top - transform.positionY) / transform.scale - PRODUCT_CHIP_HEIGHT / 2,
+      });
     });
     return () => onRegisterCenterPosition(null);
-  }, [onRegisterCenterPosition]);
+  }, [floorPlan, normalizePosition, onRegisterCenterPosition]);
+
+  const fitFloorPlan = useCallback((duration = 250) => {
+    if (!floorPlan || !canvasRef.current || !transformRef.current) return;
+    const viewport = canvasRef.current.getBoundingClientRect();
+    const planRect = getFloorPlanCanvasRect(floorPlan);
+    const padding = Math.min(48, viewport.width * 0.08, viewport.height * 0.08);
+    const scale = Math.min(1, Math.max(0.2, Math.min(
+      (viewport.width - padding * 2) / planRect.width,
+      (viewport.height - padding * 2) / planRect.height,
+    )));
+    const positionX = viewport.width / 2 - (planRect.x + planRect.width / 2) * scale;
+    const positionY = viewport.height / 2 - (planRect.y + planRect.height / 2) * scale;
+    transformRef.current.setTransform(positionX, positionY, scale, duration);
+  }, [floorPlan]);
+
+  useEffect(() => {
+    if (!floorPlan) return;
+    const frame = window.requestAnimationFrame(() => fitFloorPlan(0));
+    return () => window.cancelAnimationFrame(frame);
+  }, [fitFloorPlan, floorPlan]);
   const activeTouchPointers = useRef(new Set<number>());
   const multiTouchGestureRef = useRef(false);
   const trashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -189,6 +249,11 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onR
       const x = mode === "left" ? left : mode === "right" ? right - width : center - width / 2;
       return { ...product, x };
     });
+    if (!canPlaceProducts(nextProducts, selectedIds)) {
+      showInvalidPositionNotice();
+      setContextMenu(null);
+      return;
+    }
     onProductsChange(nextProducts);
     void updateProductPositionsAction({ branchId, zone, positions: nextProducts.filter((product) => selectedIds.includes(product.productId)).map(({ productId, x, y }) => ({ productId, x, y })) }).then((result) => {
       if (!result.ok) onProductsChange(products);
@@ -209,6 +274,11 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onR
       const index = selectedProducts.findIndex((item) => item.productId === product.productId);
       return index < 0 ? product : { ...product, y: firstY + index * (chipHeight + gap) };
     });
+    if (!canPlaceProducts(nextProducts, selectedIds)) {
+      showInvalidPositionNotice();
+      setContextMenu(null);
+      return;
+    }
     onProductsChange(nextProducts);
     void updateProductPositionsAction({ branchId, zone, positions: nextProducts.filter((product) => selectedIds.includes(product.productId)).map(({ productId, x, y }) => ({ productId, x, y })) }).then((result) => {
       if (!result.ok) onProductsChange(products);
@@ -266,13 +336,17 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onR
         const dx = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
         const dy = event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
         const nextProducts = products.map((product) => selectedIds.includes(product.productId) ? { ...product, x: product.x + dx, y: product.y + dy } : product);
+        if (!canPlaceProducts(nextProducts, selectedIds)) {
+          showInvalidPositionNotice();
+          return;
+        }
         onProductsChange(nextProducts);
         void updateProductPositionsAction({ branchId, zone, positions: nextProducts.filter((product) => selectedIds.includes(product.productId)).map(({ productId, x, y }) => ({ productId, x, y })) });
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [activeProductId, branchId, onProductsChange, products, selectedIds, zone]);
+  }, [activeProductId, branchId, canPlaceProducts, onProductsChange, products, selectedIds, showInvalidPositionNotice, zone]);
 
   useEffect(() => {
     const onMove = (event: PointerEvent) => {
@@ -318,12 +392,16 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onR
       const dx = event.delta.x / scale;
       const dy = event.delta.y / scale;
       const nextProducts = products.map((product) => movingIds.includes(product.productId) ? { ...product, x: product.x + dx, y: product.y + dy } : product);
-      onProductsChange(nextProducts);
       if (event.over?.id === "trash-zone") {
         const result = await Promise.all(movingIds.map((id) => deleteProductLayoutAction({ productId: id, branchId, zone })));
         if (result.every((item) => item.ok)) onProductsChange(products.filter((item) => !movingIds.includes(item.productId)));
         return;
       }
+      if (!canPlaceProducts(nextProducts, movingIds)) {
+        showInvalidPositionNotice();
+        return;
+      }
+      onProductsChange(nextProducts);
       const result = movingIds.length > 1
         ? await updateProductPositionsAction({ branchId, zone, positions: nextProducts.filter((item) => movingIds.includes(item.productId)).map(({ productId: id, x, y }) => ({ productId: id, x, y })) })
         : await updateProductPositionAction({ productId, branchId, zone, x: nextProducts.find((item) => item.productId === productId)?.x ?? previous.x, y: nextProducts.find((item) => item.productId === productId)?.y ?? previous.y });
@@ -335,8 +413,8 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onR
       ref={transformRef}
       minScale={0.2}
       maxScale={5}
-      initialScale={1}
-      centerOnInit
+      initialScale={floorPlan ? 0.2 : 1}
+      centerOnInit={!floorPlan}
       centerZoomedOut={false}
       limitToBounds={false}
       smooth
@@ -347,7 +425,7 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onR
       {({ resetTransform, instance }) => (
         <div
           ref={canvasRef}
-          className={`relative h-full overflow-hidden bg-slate-50 ${spacePressed ? "cursor-grab" : "cursor-default"}`}
+          className={`relative h-full overflow-hidden ${floorPlan ? "bg-slate-200" : "bg-slate-50"} ${spacePressed ? "cursor-grab" : "cursor-default"}`}
           onPointerDownCapture={(event) => {
             if (event.pointerType !== "touch") return;
             activeTouchPointers.current.add(event.pointerId);
@@ -396,12 +474,18 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onR
           onClick={(event) => { setContextMenu(null); const target = event.target instanceof HTMLElement ? event.target : null; if (!target?.closest(".product-chip") && !selectionMoved.current) { setSelectedIds([]); setActiveProductId(null); setMobileMultiSelect(false); } selectionMoved.current = false; }}
         >
           {selectionBox && <div className="pointer-events-none absolute z-20 border border-blue-500 bg-blue-400/20" style={{ left: selectionBox.x, top: selectionBox.y, width: selectionBox.width, height: selectionBox.height }} />}
+          {floorPlanNotice && (
+            <div className="pointer-events-none absolute left-1/2 top-3 z-30 -translate-x-1/2 rounded-lg bg-red-600 px-4 py-2 text-center text-sm font-semibold text-white shadow-lg">
+              {floorPlanNotice}
+            </div>
+          )}
           <div className="absolute left-3 top-3 z-10 rounded-md border bg-white/90 px-2 py-1 text-xs text-slate-600 shadow-sm">
             {Math.round(instance.transformState.scale * 100)}%
-            <button className="ml-2 underline" onClick={() => resetTransform()}>Reset</button>
+            <button className="ml-2 underline" onClick={() => floorPlan ? fitFloorPlan() : resetTransform()}>Reset</button>
           </div>
           <TransformComponent wrapperClass="!h-full !w-full" contentClass="!h-full !w-full">
             <div className="relative h-[10000px] w-[10000px]">
+              {floorPlan && <WarehouseFloorPlan plan={floorPlan} />}
               {products.map((product) => (
                 <div key={product.productId} onFocus={() => setActiveProductId(product.productId)}>
                   <DraggableProduct

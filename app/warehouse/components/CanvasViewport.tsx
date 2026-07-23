@@ -17,13 +17,14 @@ import {
   PRODUCT_CHIP_HEIGHT,
   PRODUCT_CHIP_WIDTH,
 } from "@/lib/warehouse/floor-plans";
+import { useWarehouseSettings } from "@/app/warehouse/components/WarehouseSettings";
 
 function TrashDropZone() {
   const { isOver, setNodeRef } = useDroppable({ id: "trash-zone" });
   return <div ref={setNodeRef} className={`touch-trash-zone fixed bottom-5 left-1/2 z-30 -translate-x-1/2 rounded-full px-6 py-3 text-sm font-semibold shadow-lg transition ${isOver ? "bg-red-600 text-white scale-110" : "bg-slate-900/90 text-white"}`}>🗑️ {isOver ? "Thả để xóa" : "Kéo vào đây để xóa"}</div>;
 }
 
-function DraggableProduct({ product, scale, selected, groupDelta, dragDisabled, multiTouchGesture, onSelect, onContextMenu, onMultiSelectStart, onLongPress }: { product: CanvasProduct; scale: number; selected: boolean; groupDelta: { x: number; y: number } | null; dragDisabled: boolean; multiTouchGesture: boolean; onSelect: (shift: boolean) => void; onContextMenu: (event: React.MouseEvent) => void; onMultiSelectStart: () => void; onLongPress: (x: number, y: number) => void }) {
+function DraggableProduct({ product, scale, selected, groupDelta, dragDisabled, multiTouchGesture, showInventory, mobileMultiSelectEnabled, onSelect, onContextMenu, onMultiSelectStart, onLongPress }: { product: CanvasProduct; scale: number; selected: boolean; groupDelta: { x: number; y: number } | null; dragDisabled: boolean; multiTouchGesture: boolean; showInventory: boolean; mobileMultiSelectEnabled: boolean; onSelect: (shift: boolean) => void; onContextMenu: (event: React.MouseEvent) => void; onMultiSelectStart: () => void; onLongPress: (x: number, y: number) => void }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: product.productId, disabled: dragDisabled });
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const multiSelectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -57,10 +58,12 @@ function DraggableProduct({ product, scale, selected, groupDelta, dragDisabled, 
         pointerStart.current = { x: event.clientX, y: event.clientY };
         longPressTriggered.current = false;
         clearLongPress();
-        multiSelectTimer.current = setTimeout(() => {
-          longPressTriggered.current = true;
-          onMultiSelectStart();
-        }, 300);
+        if (mobileMultiSelectEnabled) {
+          multiSelectTimer.current = setTimeout(() => {
+            longPressTriggered.current = true;
+            onMultiSelectStart();
+          }, 300);
+        }
         longPressTimer.current = setTimeout(() => {
           longPressTriggered.current = true;
           onLongPress(event.clientX, event.clientY);
@@ -95,13 +98,14 @@ function DraggableProduct({ product, scale, selected, groupDelta, dragDisabled, 
     >
       <span aria-hidden="true" className="mr-1.5 shrink-0">📦</span>
       <span className="min-w-0 flex-1 truncate" title={product.name}>{product.name}</span>
-      <span className="ml-2 shrink-0 text-xs font-normal text-white/80">({product.quantity})</span>
+      {showInventory && <span className="ml-2 shrink-0 text-xs font-normal text-white/80">({product.quantity})</span>}
     </div>
   );
 }
 
-export function CanvasViewport({ products, branchId, zone, onProductsChange, onRequestAdd, onRegisterCenterPosition, focusProductId }: { products: CanvasProduct[]; branchId: number; zone: string; onProductsChange: (products: CanvasProduct[]) => void; onRequestAdd: () => void; onRegisterCenterPosition?: (getter: (() => { x: number; y: number }) | null) => void; focusProductId?: number | null }) {
+export function CanvasViewport({ products, branchId, zone, onProductsChange, onProductsDeleted, onRequestAdd, onRegisterCenterPosition, focusProductId }: { products: CanvasProduct[]; branchId: number; zone: string; onProductsChange: (products: CanvasProduct[]) => void; onProductsDeleted?: (products: CanvasProduct[]) => void; onRequestAdd: () => void; onRegisterCenterPosition?: (getter: (() => { x: number; y: number }) | null) => void; focusProductId?: number | null }) {
   const { spacePressed } = useKeyboard();
+  const { settings } = useWarehouseSettings();
   const floorPlan = getWarehouseFloorPlan(branchId, zone);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
   const [dragging, setDragging] = useState(false);
@@ -232,6 +236,10 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onR
     return () => media.removeEventListener("change", update);
   }, []);
 
+  useEffect(() => {
+    if (!settings.mobileMultiSelect) setMobileMultiSelect(false);
+  }, [settings.mobileMultiSelect]);
+
   const alignSelected = (mode: "left" | "right" | "center") => {
     if (selectedIds.length < 2) return;
     const widths = new Map<number, number>();
@@ -323,7 +331,9 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onR
         event.preventDefault();
         void Promise.all(ids.map((productId) => deleteProductLayoutAction({ productId, branchId, zone }))).then((results) => {
           if (results.every((result) => result.ok)) {
+            const deletedProducts = products.filter((product) => ids.includes(product.productId));
             onProductsChange(products.filter((product) => !ids.includes(product.productId)));
+            onProductsDeleted?.(deletedProducts);
             setSelectedIds([]);
             setActiveProductId(null);
           }
@@ -346,7 +356,7 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onR
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [activeProductId, branchId, canPlaceProducts, onProductsChange, products, selectedIds, showInvalidPositionNotice, zone]);
+  }, [activeProductId, branchId, canPlaceProducts, onProductsChange, onProductsDeleted, products, selectedIds, showInvalidPositionNotice, zone]);
 
   useEffect(() => {
     const onMove = (event: PointerEvent) => {
@@ -377,7 +387,7 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onR
   }, []);
 
   return (
-    <DndContext id="warehouse-canvas" sensors={sensors} onDragStart={(event: DragStartEvent) => { if (mobileMultiSelect || multiTouchGestureRef.current) return; const productId = Number(event.active.id); const ids = selectedIds.includes(productId) ? selectedIds : [productId]; setSelectedIds(ids); setDragPreview({ ids, x: 0, y: 0 }); setDragging(true); setTrashVisible(!isTouchDevice); clearTrashTimer(); if (isTouchDevice) trashTimer.current = setTimeout(() => setTrashVisible(true), 100); }} onDragMove={(event: DragMoveEvent) => { if (multiTouchGestureRef.current) return; const scale = transformRef.current?.instance.transformState.scale ?? 1; setDragPreview((preview) => preview ? { ...preview, x: event.delta.x / scale, y: event.delta.y / scale } : null); }} onDragCancel={() => { setDragging(false); setTrashVisible(false); clearTrashTimer(); setDragPreview(null); }} onDragEnd={async (event: DragEndEvent) => {
+    <DndContext id="warehouse-canvas" sensors={sensors} onDragStart={(event: DragStartEvent) => { if (mobileMultiSelect || multiTouchGestureRef.current) return; const productId = Number(event.active.id); const ids = selectedIds.includes(productId) ? selectedIds : [productId]; setSelectedIds(ids); setDragPreview({ ids, x: 0, y: 0 }); setDragging(true); setTrashVisible(settings.mobileTrashDropZone && !isTouchDevice); clearTrashTimer(); if (settings.mobileTrashDropZone && isTouchDevice) trashTimer.current = setTimeout(() => setTrashVisible(true), 100); }} onDragMove={(event: DragMoveEvent) => { if (multiTouchGestureRef.current) return; const scale = transformRef.current?.instance.transformState.scale ?? 1; setDragPreview((preview) => preview ? { ...preview, x: event.delta.x / scale, y: event.delta.y / scale } : null); }} onDragCancel={() => { setDragging(false); setTrashVisible(false); clearTrashTimer(); setDragPreview(null); }} onDragEnd={async (event: DragEndEvent) => {
       setDragging(false);
       setTrashVisible(false);
       clearTrashTimer();
@@ -394,7 +404,11 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onR
       const nextProducts = products.map((product) => movingIds.includes(product.productId) ? { ...product, x: product.x + dx, y: product.y + dy } : product);
       if (event.over?.id === "trash-zone") {
         const result = await Promise.all(movingIds.map((id) => deleteProductLayoutAction({ productId: id, branchId, zone })));
-        if (result.every((item) => item.ok)) onProductsChange(products.filter((item) => !movingIds.includes(item.productId)));
+        if (result.every((item) => item.ok)) {
+          const deletedProducts = products.filter((item) => movingIds.includes(item.productId));
+          onProductsChange(products.filter((item) => !movingIds.includes(item.productId)));
+          onProductsDeleted?.(deletedProducts);
+        }
         return;
       }
       if (!canPlaceProducts(nextProducts, movingIds)) {
@@ -495,6 +509,8 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onR
                     groupDelta={dragPreview?.ids.includes(product.productId) ? { x: dragPreview.x, y: dragPreview.y } : null}
                     dragDisabled={mobileMultiSelect || spacePressed || multiTouchGesture}
                     multiTouchGesture={multiTouchGesture}
+                    showInventory={settings.showInventory}
+                    mobileMultiSelectEnabled={settings.mobileMultiSelect}
                     onSelect={(shift) => {
                       if (spacePressed) return;
                       setContextMenu(null);
@@ -537,7 +553,7 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onR
       <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-400" disabled={contextMenu.selectedIds.length < 2} onClick={distributeSelectedVertically}>Xếp dọc, cách nhau 5px</button>
       {products.find((product) => product.productId === contextMenu.productId)?.groupId && <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100" onClick={() => { const group = products.find((product) => product.productId === contextMenu.productId)?.groupId; const ids = products.filter((product) => product.groupId === group).map((product) => product.productId); void setProductLayoutsGroupAction({ branchId, zone, productIds: ids, groupId: null }).then((result) => { if (result.ok) onProductsChange(products.map((product) => ids.includes(product.productId) ? { ...product, groupId: null } : product)); }); setContextMenu(null); }}>Ungroup</button>}
     </div>}
-    {dragging && trashVisible && <TrashDropZone />}
+    {settings.mobileTrashDropZone && dragging && trashVisible && <TrashDropZone />}
     </DndContext>
   );
 }

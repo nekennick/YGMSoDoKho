@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState, useTransition } from "react";
+import { Eye, EyeOff } from "lucide-react";
 import type { ProductOption } from "@/lib/product-catalog/merge";
 import { createProductLayoutsAction } from "@/app/warehouse/actions/product-layout";
 import {
@@ -9,6 +10,7 @@ import {
   PRODUCT_CHIP_HEIGHT,
   PRODUCT_CHIP_WIDTH,
 } from "@/lib/warehouse/floor-plans";
+import { useWarehouseSettings } from "@/app/warehouse/components/WarehouseSettings";
 
 type AddedProduct = ProductOption & {
   x: number;
@@ -58,6 +60,7 @@ export function AddProductDialog({
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
 }) {
+  const { settings, updateSetting } = useWarehouseSettings();
   const [internalOpen, setInternalOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [selectedProducts, setSelectedProducts] = useState<ProductOption[]>([]);
@@ -72,9 +75,14 @@ export function AddProductDialog({
     const normalizedQuery = query.trim().toLocaleLowerCase("vi");
     return products.filter((product) => (
       !selectedIds.has(product.productId)
+      && (!settings.hideZeroInventoryProducts || product.quantity !== 0)
       && product.name.toLocaleLowerCase("vi").includes(normalizedQuery)
     ));
-  }, [products, query, selectedIds]);
+  }, [products, query, selectedIds, settings.hideZeroInventoryProducts]);
+  const zeroInventoryCount = useMemo(
+    () => products.filter((product) => !selectedIds.has(product.productId) && product.quantity === 0).length,
+    [products, selectedIds],
+  );
 
   const open = openProp ?? internalOpen;
   const setOpen = (nextOpen: boolean) => {
@@ -203,6 +211,24 @@ export function AddProductDialog({
               />
             </div>
 
+            <div className="mt-2 flex min-h-8 items-center justify-between gap-3">
+              <button
+                type="button"
+                role="switch"
+                aria-checked={settings.hideZeroInventoryProducts}
+                className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${settings.hideZeroInventoryProducts ? "border-blue-200 bg-blue-50 text-blue-700" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}
+                onClick={() => updateSetting("hideZeroInventoryProducts", !settings.hideZeroInventoryProducts)}
+              >
+                {settings.hideZeroInventoryProducts
+                  ? <Eye className="h-3.5 w-3.5" aria-hidden="true" />
+                  : <EyeOff className="h-3.5 w-3.5" aria-hidden="true" />}
+                {settings.hideZeroInventoryProducts ? "Hiện sản phẩm tồn = 0" : "Ẩn sản phẩm tồn = 0"}
+              </button>
+              {settings.hideZeroInventoryProducts && (
+                <span className="text-xs text-slate-500">{zeroInventoryCount} sản phẩm đang ẩn</span>
+              )}
+            </div>
+
             <div className="mt-3 min-h-0 flex-1 overflow-auto">
               {filtered.map((product) => (
                 <button
@@ -214,12 +240,16 @@ export function AddProductDialog({
                 >
                   <span aria-hidden="true">📦</span>
                   <span className="min-w-0 flex-1 truncate" title={product.name}>{product.name}</span>
-                  <span className="shrink-0 text-xs text-slate-500">SL: {product.quantity}</span>
+                  {settings.showInventory && <span className="shrink-0 text-xs text-slate-500">SL: {product.quantity}</span>}
                 </button>
               ))}
               {filtered.length === 0 && (
                 <p className="p-3 text-center text-sm text-slate-500">
-                  {products.length === selectedProducts.length ? "Đã chọn hết sản phẩm có thể thêm." : "Không còn sản phẩm phù hợp."}
+                  {products.length === selectedProducts.length
+                    ? "Đã chọn hết sản phẩm có thể thêm."
+                    : settings.hideZeroInventoryProducts && zeroInventoryCount > 0
+                      ? `Không còn sản phẩm phù hợp. Có ${zeroInventoryCount} sản phẩm tồn bằng 0 đang ẩn.`
+                      : "Không còn sản phẩm phù hợp."}
                 </p>
               )}
             </div>

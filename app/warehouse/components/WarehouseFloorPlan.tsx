@@ -3,6 +3,7 @@
 import { memo, useEffect, useRef } from "react";
 import type { WarehouseFloorPlan as WarehouseFloorPlanConfig } from "@/lib/warehouse/floor-plans";
 import { getFloorPlanCanvasRect, PRODUCT_CHIP_HEIGHT, PRODUCT_CHIP_WIDTH } from "@/lib/warehouse/floor-plans";
+import { useWarehouseSettings } from "@/app/warehouse/components/WarehouseSettings";
 
 function traceUsableArea(
   context: CanvasRenderingContext2D,
@@ -24,7 +25,7 @@ function traceUsableArea(
   context.closePath();
 }
 
-function drawFloorPlan(canvas: HTMLCanvasElement, plan: WarehouseFloorPlanConfig) {
+function drawFloorPlan(canvas: HTMLCanvasElement, plan: WarehouseFloorPlanConfig, showGrid: boolean) {
   const planRect = getFloorPlanCanvasRect(plan);
   const context = canvas.getContext("2d");
   if (!context) return;
@@ -41,32 +42,34 @@ function drawFloorPlan(canvas: HTMLCanvasElement, plan: WarehouseFloorPlanConfig
   traceUsableArea(context, planRect.width, planRect.height, excludedArea);
   context.clip();
 
-  const minorGridSize = plan.pixelsPerMeter / 2;
-  context.beginPath();
-  for (let x = minorGridSize; x < planRect.width; x += minorGridSize) {
-    context.moveTo(x, 0);
-    context.lineTo(x, planRect.height);
-  }
-  for (let y = minorGridSize; y < planRect.height; y += minorGridSize) {
-    context.moveTo(0, y);
-    context.lineTo(planRect.width, y);
-  }
-  context.strokeStyle = "#cbd5e1";
-  context.lineWidth = 1;
-  context.stroke();
+  if (showGrid) {
+    const minorGridSize = plan.pixelsPerMeter / 2;
+    context.beginPath();
+    for (let x = minorGridSize; x < planRect.width; x += minorGridSize) {
+      context.moveTo(x, 0);
+      context.lineTo(x, planRect.height);
+    }
+    for (let y = minorGridSize; y < planRect.height; y += minorGridSize) {
+      context.moveTo(0, y);
+      context.lineTo(planRect.width, y);
+    }
+    context.strokeStyle = "#cbd5e1";
+    context.lineWidth = 1;
+    context.stroke();
 
-  context.beginPath();
-  for (let x = plan.pixelsPerMeter; x < planRect.width; x += plan.pixelsPerMeter) {
-    context.moveTo(x, 0);
-    context.lineTo(x, planRect.height);
+    context.beginPath();
+    for (let x = plan.pixelsPerMeter; x < planRect.width; x += plan.pixelsPerMeter) {
+      context.moveTo(x, 0);
+      context.lineTo(x, planRect.height);
+    }
+    for (let y = plan.pixelsPerMeter; y < planRect.height; y += plan.pixelsPerMeter) {
+      context.moveTo(0, y);
+      context.lineTo(planRect.width, y);
+    }
+    context.strokeStyle = "#94a3b8";
+    context.lineWidth = 2;
+    context.stroke();
   }
-  for (let y = plan.pixelsPerMeter; y < planRect.height; y += plan.pixelsPerMeter) {
-    context.moveTo(0, y);
-    context.lineTo(planRect.width, y);
-  }
-  context.strokeStyle = "#94a3b8";
-  context.lineWidth = 2;
-  context.stroke();
   context.restore();
 
   traceUsableArea(context, planRect.width, planRect.height, excludedArea);
@@ -114,14 +117,15 @@ function drawFloorPlan(canvas: HTMLCanvasElement, plan: WarehouseFloorPlanConfig
 }
 
 export const WarehouseFloorPlan = memo(function WarehouseFloorPlan({ plan }: { plan: WarehouseFloorPlanConfig }) {
+  const { settings } = useWarehouseSettings();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const planRect = getFloorPlanCanvasRect(plan);
   const chipWidthMeters = PRODUCT_CHIP_WIDTH / plan.pixelsPerMeter;
   const chipHeightMeters = PRODUCT_CHIP_HEIGHT / plan.pixelsPerMeter;
 
   useEffect(() => {
-    if (canvasRef.current) drawFloorPlan(canvasRef.current, plan);
-  }, [plan]);
+    if (canvasRef.current) drawFloorPlan(canvasRef.current, plan, settings.showFloorGrid);
+  }, [plan, settings.showFloorGrid]);
 
   return (
     <div
@@ -134,14 +138,14 @@ export const WarehouseFloorPlan = memo(function WarehouseFloorPlan({ plan }: { p
         height: planRect.height,
       }}
     >
-      <div className="absolute bottom-full left-0 mb-3 whitespace-nowrap rounded-lg border border-blue-200 bg-white/95 px-4 py-2 shadow-sm">
+      {settings.showFloorPlanInfo && <div className="absolute bottom-full left-0 mb-3 whitespace-nowrap rounded-lg border border-blue-200 bg-white/95 px-4 py-2 shadow-sm">
         <div className="text-[52px] font-extrabold leading-none tracking-tight text-blue-900">
           KHO ĐÔNG · 226 m²
         </div>
         <div className="mt-2 text-[30px] font-semibold leading-none text-slate-600">
           Mặt bằng 16 × 16 m · mỗi ô lớn 1 m
         </div>
-      </div>
+      </div>}
 
       <canvas
         ref={canvasRef}
@@ -154,9 +158,9 @@ export const WarehouseFloorPlan = memo(function WarehouseFloorPlan({ plan }: { p
         }}
       />
 
-      <div className="absolute left-0 top-full mt-3 rounded-lg border border-blue-200 bg-white/90 px-4 py-2 text-[26px] font-semibold text-slate-700 shadow-sm">
+      {settings.showFloorPlanInfo && <div className="absolute left-0 top-full mt-3 rounded-lg border border-blue-200 bg-white/90 px-4 py-2 text-[26px] font-semibold text-slate-700 shadow-sm">
         Ô chip chuẩn: {chipWidthMeters.toFixed(2)} × {chipHeightMeters.toFixed(2)} m
-      </div>
+      </div>}
     </div>
   );
 });

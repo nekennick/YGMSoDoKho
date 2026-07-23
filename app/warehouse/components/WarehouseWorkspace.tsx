@@ -4,8 +4,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { WarehouseDataResult } from "@/lib/warehouse/initial-data";
 import { CanvasViewport } from "@/app/warehouse/components/CanvasViewport";
 import { AddProductDialog } from "@/app/warehouse/components/AddProductDialog";
+import { useWarehouseSettings } from "@/app/warehouse/components/WarehouseSettings";
+import type { CanvasProduct } from "@/lib/product-catalog/merge";
 
 export function WarehouseWorkspace({ result, branchId, zone }: { result: WarehouseDataResult; branchId: number; zone: string }) {
+  const { settings } = useWarehouseSettings();
   const [canvasProducts, setCanvasProducts] = useState(result.ok ? result.data.canvasProducts : []);
   const [availableProducts, setAvailableProducts] = useState(result.ok ? result.data.availableProducts : []);
   const [addDialogOpen, setAddDialogOpen] = useState(false);
@@ -23,6 +26,15 @@ export function WarehouseWorkspace({ result, branchId, zone }: { result: Warehou
       setAvailableProducts([]);
     }
   }, [branchId, zone, result]);
+  const restoreDeletedProducts = useCallback((deletedProducts: CanvasProduct[]) => {
+    setAvailableProducts((current) => {
+      const existingIds = new Set(current.map((product) => product.productId));
+      const restored = deletedProducts
+        .filter((product) => !existingIds.has(product.productId))
+        .map(({ productId, name, quantity }) => ({ productId, name, quantity }));
+      return [...current, ...restored];
+    });
+  }, []);
   if (!result.ok) {
     return (
       <main className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-8">
@@ -49,7 +61,7 @@ export function WarehouseWorkspace({ result, branchId, zone }: { result: Warehou
       })),
     ]);
     setAvailableProducts((current) => current.filter((candidate) => !addedIds.has(candidate.productId)));
-    setFocusProductId(products[0]?.productId ?? null);
+    setFocusProductId(settings.focusNewProducts ? products[0]?.productId ?? null : null);
   };
   return (
     <main className="flex min-h-0 flex-1 flex-col overflow-hidden overscroll-none">
@@ -61,7 +73,7 @@ export function WarehouseWorkspace({ result, branchId, zone }: { result: Warehou
         <span className="text-slate-500">{availableProducts.length} sản phẩm có thể thêm</span>
       </div>
       <section className="relative min-h-0 flex-1 overflow-hidden">
-        <CanvasViewport products={canvasProducts} branchId={branchId} zone={zone} onProductsChange={setCanvasProducts} onRequestAdd={() => setAddDialogOpen(true)} onRegisterCenterPosition={registerCenterPosition} focusProductId={focusProductId} />
+        <CanvasViewport products={canvasProducts} branchId={branchId} zone={zone} onProductsChange={setCanvasProducts} onProductsDeleted={restoreDeletedProducts} onRequestAdd={() => setAddDialogOpen(true)} onRegisterCenterPosition={registerCenterPosition} focusProductId={focusProductId} />
       </section>
     </main>
   );

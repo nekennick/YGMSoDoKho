@@ -12,6 +12,7 @@ import { WarehouseFloorPlan } from "@/app/warehouse/components/WarehouseFloorPla
 import {
   findNearestValidFloorPlanPosition,
   getFloorPlanCanvasRect,
+  getFloorPlanUsableRect,
   getWarehouseFloorPlan,
   isPositionInsideFloorPlan,
   PRODUCT_CHIP_HEIGHT,
@@ -153,7 +154,7 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onP
       const transform = transformRef.current?.instance.transformState;
       if (!viewport || !transform || !transform.scale) {
         if (floorPlan) {
-          const planRect = getFloorPlanCanvasRect(floorPlan);
+          const planRect = getFloorPlanUsableRect(floorPlan);
           return normalizePosition({
             x: planRect.x + planRect.width / 2 - PRODUCT_CHIP_WIDTH / 2,
             y: planRect.y + planRect.height / 2 - PRODUCT_CHIP_HEIGHT / 2,

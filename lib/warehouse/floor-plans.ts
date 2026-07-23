@@ -14,9 +14,11 @@ export type WarehouseFloorPlan = {
   canvasY: number;
   widthMeters: number;
   heightMeters: number;
+  usableHeightMeters: number;
   pixelsPerMeter: number;
   usableAreaSquareMeters: number;
   excludedAreas: Array<FloorPlanRect & { name: string }>;
+  additionalUsableAreas: Array<FloorPlanRect & { name: string }>;
 };
 
 export const PRODUCT_CHIP_WIDTH = 256;
@@ -28,15 +30,25 @@ const CAO_LANH_COLD_FLOOR_PLAN: WarehouseFloorPlan = {
   canvasX: 240,
   canvasY: 240,
   widthMeters: 16,
-  heightMeters: 16,
+  heightMeters: 22,
+  usableHeightMeters: 16,
   pixelsPerMeter: 100,
-  usableAreaSquareMeters: 226,
+  usableAreaSquareMeters: 250,
   excludedAreas: [
     {
       name: "Kho Mát",
       x: 11 * 100,
       y: 0,
       width: 5 * 100,
+      height: 6 * 100,
+    },
+  ],
+  additionalUsableAreas: [
+    {
+      name: "Kho Mát 1",
+      x: 0,
+      y: 16 * 100,
+      width: 4 * 100,
       height: 6 * 100,
     },
   ],
@@ -57,6 +69,15 @@ export function getFloorPlanCanvasRect(plan: WarehouseFloorPlan): FloorPlanRect 
   };
 }
 
+export function getFloorPlanUsableRect(plan: WarehouseFloorPlan): FloorPlanRect {
+  return {
+    x: plan.canvasX,
+    y: plan.canvasY,
+    width: plan.widthMeters * plan.pixelsPerMeter,
+    height: plan.usableHeightMeters * plan.pixelsPerMeter,
+  };
+}
+
 function rectanglesOverlap(first: FloorPlanRect, second: FloorPlanRect): boolean {
   return (
     first.x < second.x + second.width
@@ -74,7 +95,16 @@ export function isPositionInsideFloorPlan(
     height: PRODUCT_CHIP_HEIGHT,
   },
 ): boolean {
-  const planRect = getFloorPlanCanvasRect(plan);
+  const planRect = getFloorPlanUsableRect(plan);
+  const allowedRects = [
+    planRect,
+    ...plan.additionalUsableAreas.map((area) => ({
+      x: plan.canvasX + area.x,
+      y: plan.canvasY + area.y,
+      width: area.width,
+      height: area.height,
+    })),
+  ];
   const productRect: FloorPlanRect = {
     x: position.x,
     y: position.y,
@@ -82,12 +112,12 @@ export function isPositionInsideFloorPlan(
     height: footprint.height,
   };
 
-  const insideOuterBoundary = (
-    productRect.x >= planRect.x
-    && productRect.y >= planRect.y
-    && productRect.x + productRect.width <= planRect.x + planRect.width
-    && productRect.y + productRect.height <= planRect.y + planRect.height
-  );
+  const insideOuterBoundary = allowedRects.some((allowedRect) => (
+    productRect.x >= allowedRect.x
+    && productRect.y >= allowedRect.y
+    && productRect.x + productRect.width <= allowedRect.x + allowedRect.width
+    && productRect.y + productRect.height <= allowedRect.y + allowedRect.height
+  ));
 
   if (!insideOuterBoundary) return false;
 
@@ -111,15 +141,29 @@ export function findNearestValidFloorPlanPosition(
     height: PRODUCT_CHIP_HEIGHT,
   },
 ): { x: number; y: number } {
-  const planRect = getFloorPlanCanvasRect(plan);
+  const planRect = getFloorPlanUsableRect(plan);
+  const allowedRects = [
+    planRect,
+    ...plan.additionalUsableAreas.map((area) => ({
+      x: plan.canvasX + area.x,
+      y: plan.canvasY + area.y,
+      width: area.width,
+      height: area.height,
+    })),
+  ];
+  const canvasRect = getFloorPlanCanvasRect(plan);
   const clamped = {
-    x: clamp(position.x, planRect.x, planRect.x + planRect.width - footprint.width),
-    y: clamp(position.y, planRect.y, planRect.y + planRect.height - footprint.height),
+    x: clamp(position.x, canvasRect.x, canvasRect.x + canvasRect.width - footprint.width),
+    y: clamp(position.y, canvasRect.y, canvasRect.y + canvasRect.height - footprint.height),
   };
 
   if (isPositionInsideFloorPlan(plan, clamped, footprint)) return clamped;
 
-  const candidates = plan.excludedAreas.flatMap((area) => {
+  const allowedCandidates = allowedRects.map((allowedRect) => ({
+    x: clamp(position.x, allowedRect.x, allowedRect.x + allowedRect.width - footprint.width),
+    y: clamp(position.y, allowedRect.y, allowedRect.y + allowedRect.height - footprint.height),
+  }));
+  const excludedCandidates = plan.excludedAreas.flatMap((area) => {
     const excluded = {
       x: plan.canvasX + area.x,
       y: plan.canvasY + area.y,
@@ -145,10 +189,12 @@ export function findNearestValidFloorPlanPosition(
         y: excluded.y + excluded.height,
       },
     ].map((candidate) => ({
-      x: clamp(candidate.x, planRect.x, planRect.x + planRect.width - footprint.width),
-      y: clamp(candidate.y, planRect.y, planRect.y + planRect.height - footprint.height),
+      x: clamp(candidate.x, canvasRect.x, canvasRect.x + canvasRect.width - footprint.width),
+      y: clamp(candidate.y, canvasRect.y, canvasRect.y + canvasRect.height - footprint.height),
     }));
-  }).filter((candidate) => isPositionInsideFloorPlan(plan, candidate, footprint));
+  });
+  const candidates = [...allowedCandidates, ...excludedCandidates]
+    .filter((candidate) => isPositionInsideFloorPlan(plan, candidate, footprint));
 
   return candidates.reduce((nearest, candidate) => {
     const nearestDistance = Math.hypot(nearest.x - position.x, nearest.y - position.y);

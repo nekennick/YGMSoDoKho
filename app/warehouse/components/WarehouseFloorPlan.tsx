@@ -2,7 +2,7 @@
 
 import { memo, useEffect, useRef } from "react";
 import type { WarehouseFloorPlan as WarehouseFloorPlanConfig } from "@/lib/warehouse/floor-plans";
-import { getFloorPlanCanvasRect, PRODUCT_CHIP_HEIGHT, PRODUCT_CHIP_WIDTH } from "@/lib/warehouse/floor-plans";
+import { getFloorPlanCanvasRect, getFloorPlanUsableRect, PRODUCT_CHIP_HEIGHT, PRODUCT_CHIP_WIDTH } from "@/lib/warehouse/floor-plans";
 import { useWarehouseSettings } from "@/app/warehouse/components/WarehouseSettings";
 
 function traceUsableArea(
@@ -27,6 +27,7 @@ function traceUsableArea(
 
 function drawFloorPlan(canvas: HTMLCanvasElement, plan: WarehouseFloorPlanConfig, showGrid: boolean) {
   const planRect = getFloorPlanCanvasRect(plan);
+  const usableRect = getFloorPlanUsableRect(plan);
   const context = canvas.getContext("2d");
   if (!context) return;
 
@@ -34,12 +35,15 @@ function drawFloorPlan(canvas: HTMLCanvasElement, plan: WarehouseFloorPlanConfig
   canvas.height = planRect.height;
   const excludedArea = plan.excludedAreas[0];
 
-  traceUsableArea(context, planRect.width, planRect.height, excludedArea);
+  context.fillStyle = "#e2e8f0";
+  context.fillRect(0, usableRect.height, planRect.width, planRect.height - usableRect.height);
+
+  traceUsableArea(context, usableRect.width, usableRect.height, excludedArea);
   context.fillStyle = "#eff6ff";
   context.fill();
 
   context.save();
-  traceUsableArea(context, planRect.width, planRect.height, excludedArea);
+  traceUsableArea(context, usableRect.width, usableRect.height, excludedArea);
   context.clip();
 
   if (showGrid) {
@@ -47,9 +51,9 @@ function drawFloorPlan(canvas: HTMLCanvasElement, plan: WarehouseFloorPlanConfig
     context.beginPath();
     for (let x = minorGridSize; x < planRect.width; x += minorGridSize) {
       context.moveTo(x, 0);
-      context.lineTo(x, planRect.height);
+      context.lineTo(x, usableRect.height);
     }
-    for (let y = minorGridSize; y < planRect.height; y += minorGridSize) {
+    for (let y = minorGridSize; y < usableRect.height; y += minorGridSize) {
       context.moveTo(0, y);
       context.lineTo(planRect.width, y);
     }
@@ -60,9 +64,9 @@ function drawFloorPlan(canvas: HTMLCanvasElement, plan: WarehouseFloorPlanConfig
     context.beginPath();
     for (let x = plan.pixelsPerMeter; x < planRect.width; x += plan.pixelsPerMeter) {
       context.moveTo(x, 0);
-      context.lineTo(x, planRect.height);
+      context.lineTo(x, usableRect.height);
     }
-    for (let y = plan.pixelsPerMeter; y < planRect.height; y += plan.pixelsPerMeter) {
+    for (let y = plan.pixelsPerMeter; y < usableRect.height; y += plan.pixelsPerMeter) {
       context.moveTo(0, y);
       context.lineTo(planRect.width, y);
     }
@@ -72,11 +76,61 @@ function drawFloorPlan(canvas: HTMLCanvasElement, plan: WarehouseFloorPlanConfig
   }
   context.restore();
 
-  traceUsableArea(context, planRect.width, planRect.height, excludedArea);
+  traceUsableArea(context, usableRect.width, usableRect.height, excludedArea);
   context.strokeStyle = "#1e3a8a";
   context.lineWidth = 12;
   context.lineJoin = "round";
   context.stroke();
+  context.beginPath();
+  context.moveTo(0, usableRect.height);
+  context.lineTo(planRect.width, usableRect.height);
+  context.strokeStyle = "#64748b";
+  context.lineWidth = 8;
+  context.stroke();
+
+  for (const area of plan.additionalUsableAreas) {
+    context.fillStyle = "#eff6ff";
+    context.fillRect(area.x, area.y, area.width, area.height);
+
+    if (showGrid) {
+      context.save();
+      context.beginPath();
+      context.rect(area.x, area.y, area.width, area.height);
+      context.clip();
+
+      const minorGridSize = plan.pixelsPerMeter / 2;
+      context.beginPath();
+      for (let x = area.x + minorGridSize; x < area.x + area.width; x += minorGridSize) {
+        context.moveTo(x, area.y);
+        context.lineTo(x, area.y + area.height);
+      }
+      for (let y = area.y + minorGridSize; y < area.y + area.height; y += minorGridSize) {
+        context.moveTo(area.x, y);
+        context.lineTo(area.x + area.width, y);
+      }
+      context.strokeStyle = "#cbd5e1";
+      context.lineWidth = 1;
+      context.stroke();
+
+      context.beginPath();
+      for (let x = area.x + plan.pixelsPerMeter; x < area.x + area.width; x += plan.pixelsPerMeter) {
+        context.moveTo(x, area.y);
+        context.lineTo(x, area.y + area.height);
+      }
+      for (let y = area.y + plan.pixelsPerMeter; y < area.y + area.height; y += plan.pixelsPerMeter) {
+        context.moveTo(area.x, y);
+        context.lineTo(area.x + area.width, y);
+      }
+      context.strokeStyle = "#94a3b8";
+      context.lineWidth = 2;
+      context.stroke();
+      context.restore();
+    }
+
+    context.strokeStyle = "#1e3a8a";
+    context.lineWidth = 12;
+    context.strokeRect(area.x, area.y, area.width, area.height);
+  }
 
   for (const area of plan.excludedAreas) {
     context.fillStyle = "#fee2e2";
@@ -112,8 +166,14 @@ function drawFloorPlan(canvas: HTMLCanvasElement, plan: WarehouseFloorPlanConfig
 
     context.fillStyle = "#b91c1c";
     context.font = "600 34px system-ui, sans-serif";
-    context.fillText("Không sử dụng · 5 × 6 m", area.x + area.width / 2, area.y + area.height / 2 + 38);
+    context.fillText(`Không sử dụng · ${area.width / plan.pixelsPerMeter} × ${area.height / plan.pixelsPerMeter} m`, area.x + area.width / 2, area.y + area.height / 2 + 38);
   }
+
+  context.fillStyle = "#475569";
+  context.font = "700 42px system-ui, sans-serif";
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.fillText("Khu soạn hàng · ngoài Kho Đông", planRect.width * 0.68, usableRect.height + (planRect.height - usableRect.height) / 2);
 }
 
 export const WarehouseFloorPlan = memo(function WarehouseFloorPlan({ plan }: { plan: WarehouseFloorPlanConfig }) {
@@ -140,7 +200,7 @@ export const WarehouseFloorPlan = memo(function WarehouseFloorPlan({ plan }: { p
     >
       {settings.showFloorPlanInfo && <div className="absolute bottom-full left-0 mb-3 whitespace-nowrap rounded-lg border border-blue-200 bg-white/95 px-4 py-2 shadow-sm">
         <div className="text-[52px] font-extrabold leading-none tracking-tight text-blue-900">
-          KHO ĐÔNG · 226 m²
+          KHO ĐÔNG · {plan.usableAreaSquareMeters} m²
         </div>
         <div className="mt-2 text-[30px] font-semibold leading-none text-slate-600">
           Mặt bằng 16 × 16 m · mỗi ô lớn 1 m

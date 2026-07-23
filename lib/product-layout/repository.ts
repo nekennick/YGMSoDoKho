@@ -44,6 +44,30 @@ export async function createProductLayout(input: CreateProductLayoutInput): Prom
   return toRecord(layout);
 }
 
+export async function createProductLayouts(inputs: CreateProductLayoutInput[]): Promise<ProductLayoutRecord[]> {
+  const layouts = await prisma.$transaction(inputs.map((input) => prisma.productLayout.create({
+    data: {
+      productId: input.productId,
+      branchId: input.branchId,
+      zone: input.zone,
+      x: input.x,
+      y: input.y,
+      ...(input.color === undefined ? {} : { color: input.color }),
+    },
+  })));
+  return layouts.map(toRecord);
+}
+
+export async function findProductLayoutsInBranch(productIds: number[], branchId: number): Promise<ProductLayoutRecord[]> {
+  const layouts = await prisma.productLayout.findMany({
+    where: {
+      branchId,
+      productId: { in: productIds },
+    },
+  });
+  return layouts.map(toRecord);
+}
+
 export async function updateProductPosition(input: UpdateProductPositionInput): Promise<ProductLayoutRecord> {
   const layout = await prisma.productLayout.update({
     where: { branchId_zone_productId: { branchId: input.branchId, zone: input.zone, productId: input.productId } },

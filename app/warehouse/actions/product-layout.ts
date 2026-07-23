@@ -4,10 +4,13 @@ import { z } from "zod";
 import { updateProductPosition } from "@/lib/product-layout/repository";
 import { updateProductPositions } from "@/lib/product-layout/repository";
 import { createProductLayout } from "@/lib/product-layout/repository";
+import { createProductLayouts } from "@/lib/product-layout/repository";
 import { deleteProductLayout } from "@/lib/product-layout/repository";
 import { findProductLayoutInBranch } from "@/lib/product-layout/repository";
+import { findProductLayoutsInBranch } from "@/lib/product-layout/repository";
 import { setProductLayoutsGroup } from "@/lib/product-layout/repository";
 import { getProductCatalogService } from "@/lib/warehouse/catalog-service";
+import { getWarehouseFloorPlan, isPositionInsideFloorPlan } from "@/lib/warehouse/floor-plans";
 
 const updatePositionSchema = z.object({
   productId: z.number().int().positive(),
@@ -23,6 +26,10 @@ export type ProductLayoutActionResult =
 
 export type CreateProductLayoutActionResult =
   | { ok: true; data: { productId: number; x: number; y: number; color: string; quantity: number } }
+  | { ok: false; error: { code: "INVALID_INPUT" | "NOT_FOUND" | "DUPLICATE" | "PERSISTENCE_ERROR"; message: string } };
+
+export type CreateProductLayoutsActionResult =
+  | { ok: true; data: Array<{ productId: number; x: number; y: number; color: string; quantity: number }> }
   | { ok: false; error: { code: "INVALID_INPUT" | "NOT_FOUND" | "DUPLICATE" | "PERSISTENCE_ERROR"; message: string } };
 
 const createLayoutSchema = z.object({
@@ -48,6 +55,78 @@ export async function createProductLayoutAction(input: unknown): Promise<CreateP
   } catch (error) {
     const duplicate = error instanceof Error && error.message.includes("Unique constraint");
     return { ok: false, error: { code: duplicate ? "DUPLICATE" : "PERSISTENCE_ERROR", message: duplicate ? "Sản phẩm đã nằm trong một vùng của kho này." : "Không thể thêm sản phẩm." } };
+  }
+}
+
+const createLayoutsSchema = z.object({
+  branchId: z.number().int().positive(),
+  zone: z.string().min(1),
+  products: z.array(z.object({
+    productId: z.number().int().positive(),
+    x: z.number().finite(),
+    y: z.number().finite(),
+  })).min(1).max(100),
+}).superRefine((value, context) => {
+  const productIds = value.products.map((product) => product.productId);
+  if (new Set(productIds).size !== productIds.length) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Danh sách sản phẩm bị trùng.",
+      path: ["products"],
+    });
+  }
+});
+
+export async function createProductLayoutsAction(input: unknown): Promise<CreateProductLayoutsActionResult> {
+  const parsed = createLayoutsSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: { code: "INVALID_INPUT", message: "Danh sách sản phẩm không hợp lệ." } };
+  }
+
+  const { branchId, zone, products: requestedProducts } = parsed.data;
+  const productIds = requestedProducts.map((product) => product.productId);
+  const floorPlan = getWarehouseFloorPlan(branchId, zone);
+  if (floorPlan && requestedProducts.some((product) => !isPositionInsideFloorPlan(floorPlan, product))) {
+    return { ok: false, error: { code: "INVALID_INPUT", message: "Có sản phẩm nằm ngoài vùng sử dụng của kho." } };
+  }
+
+  try {
+    const existingLayouts = await findProductLayoutsInBranch(productIds, branchId);
+    if (existingLayouts.length > 0) {
+      return { ok: false, error: { code: "DUPLICATE", message: "Có sản phẩm đã nằm trong một vùng của kho này." } };
+    }
+
+    const catalog = await getProductCatalogService(branchId).listProducts();
+    const catalogById = new Map(catalog.filter((product) => product.isActive).map((product) => [product.id, product]));
+    if (productIds.some((productId) => !catalogById.has(productId))) {
+      return { ok: false, error: { code: "NOT_FOUND", message: "Có sản phẩm không còn hoạt động trên KiotViet." } };
+    }
+
+    const layouts = await createProductLayouts(requestedProducts.map((product) => ({
+      ...product,
+      branchId,
+      zone,
+    })));
+
+    return {
+      ok: true,
+      data: layouts.map((layout) => ({
+        productId: layout.productId,
+        x: layout.x,
+        y: layout.y,
+        color: layout.color,
+        quantity: catalogById.get(layout.productId)?.quantity ?? 0,
+      })),
+    };
+  } catch (error) {
+    const duplicate = error instanceof Error && error.message.includes("Unique constraint");
+    return {
+      ok: false,
+      error: {
+        code: duplicate ? "DUPLICATE" : "PERSISTENCE_ERROR",
+        message: duplicate ? "Có sản phẩm đã nằm trong một vùng của kho này." : "Không thể thêm các sản phẩm.",
+      },
+    };
   }
 }
 

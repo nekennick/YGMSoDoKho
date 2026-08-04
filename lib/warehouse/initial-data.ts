@@ -1,6 +1,7 @@
 import { listProductLayoutsByBranch } from "@/lib/product-layout/repository";
 import { getProductCatalogService } from "@/lib/warehouse/catalog-service";
 import { mergeCatalogAndLayouts, type WarehouseInitialData } from "@/lib/product-catalog/merge";
+import { findNearestValidFloorPlanPosition, getWarehouseFloorPlan, isPositionInsideFloorPlan } from "@/lib/warehouse/floor-plans";
 
 export type WarehouseDataResult =
   | { ok: true; data: WarehouseInitialData }
@@ -20,7 +21,14 @@ export async function loadWarehouseInitialData(branchId: number, zone: string): 
     if (layoutResult.status === "rejected") throw Object.assign(layoutResult.reason, { source: "DATABASE" });
     const products = catalogResult.value;
     const branchLayouts = layoutResult.value;
-    const currentZoneLayouts = branchLayouts.filter((layout) => layout.zone === zone);
+    const floorPlan = getWarehouseFloorPlan(branchId, zone);
+    const currentZoneLayouts = branchLayouts
+      .filter((layout) => layout.zone === zone)
+      .map((layout) => {
+        if (!floorPlan || isPositionInsideFloorPlan(floorPlan, layout)) return layout;
+        const safePosition = findNearestValidFloorPlanPosition(floorPlan, layout);
+        return { ...layout, x: safePosition.x, y: safePosition.y };
+      });
     const unavailableProductIds = new Set(branchLayouts.map((layout) => layout.productId));
     return { ok: true, data: mergeCatalogAndLayouts(products, currentZoneLayouts, unavailableProductIds) };
   } catch (error) {

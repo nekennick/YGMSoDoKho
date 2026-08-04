@@ -87,7 +87,7 @@ function DraggableProduct({ product, scale, selected, groupDelta, dragDisabled, 
       }}
       onContextMenu={onContextMenu}
       data-product-id={product.productId}
-      className={`product-chip absolute flex h-10 w-64 min-w-64 max-w-64 touch-none items-center overflow-hidden rounded-lg border px-3 text-sm font-medium text-white shadow-sm transition-[filter,box-shadow] ${selected ? "border-yellow-300 brightness-125 saturate-150 ring-4 ring-yellow-300/80 ring-offset-2 ring-offset-slate-50" : "border-slate-200"}`}
+      className={`product-chip absolute flex h-10 w-[205px] min-w-[205px] max-w-[205px] touch-none items-center overflow-hidden rounded-lg border px-3 text-sm font-medium text-white shadow-sm transition-[filter,box-shadow] ${selected ? "border-yellow-300 brightness-125 saturate-150 ring-4 ring-yellow-300/80 ring-offset-2 ring-offset-slate-50" : product.groupId ? "border-violet-200 ring-2 ring-violet-300/80 ring-offset-1 ring-offset-slate-50" : "border-slate-200"}`}
       style={{
         left: product.x,
         top: product.y,
@@ -100,6 +100,7 @@ function DraggableProduct({ product, scale, selected, groupDelta, dragDisabled, 
       <span aria-hidden="true" className="mr-1.5 shrink-0">📦</span>
       <span className="min-w-0 flex-1 truncate" title={product.name}>{product.name}</span>
       {showInventory && <span className="ml-2 shrink-0 text-xs font-normal text-white/80">({product.quantity})</span>}
+      {product.groupId && <span aria-label="Đã group" className="ml-1.5 shrink-0 text-xs" title="Đã group">⛓</span>}
     </div>
   );
 }
@@ -116,6 +117,7 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onP
   const [dragPreview, setDragPreview] = useState<{ ids: number[]; x: number; y: number } | null>(null);
   const [isTouchDevice, setIsTouchDevice] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ productId: number; x: number; y: number; selectedIds: number[] } | null>(null);
+  const [gridMenuOpen, setGridMenuOpen] = useState(false);
   const [mobileMultiSelect, setMobileMultiSelect] = useState(false);
   const [multiTouchGesture, setMultiTouchGesture] = useState(false);
   const [floorPlanNotice, setFloorPlanNotice] = useState<string | null>(null);
@@ -137,8 +139,18 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onP
       .every((product) => isPositionInsideFloorPlan(floorPlan, product))
   ), [floorPlan]);
 
+  const getDragProductIds = useCallback((productId: number) => {
+    const activeProduct = products.find((product) => product.productId === productId);
+    if (activeProduct?.groupId) {
+      return products
+        .filter((product) => product.groupId === activeProduct.groupId)
+        .map((product) => product.productId);
+    }
+    return selectedIds.includes(productId) ? selectedIds : [productId];
+  }, [products, selectedIds]);
+
   const showInvalidPositionNotice = useCallback(() => {
-    setFloorPlanNotice("Vị trí này nằm ngoài Kho Đông hoặc chạm vào vùng Kho Mát.");
+    setFloorPlanNotice("Vị trí này nằm trong khu vực không được đặt chip.");
   }, []);
 
   useEffect(() => {
@@ -166,7 +178,7 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onP
       const anchorNode = anchorProduct && canvasRef.current?.querySelector<HTMLElement>(`.product-chip[data-product-id="${anchorProduct.productId}"]`);
       if (anchorProduct && anchorNode) {
         const anchorRect = anchorNode.getBoundingClientRect();
-        const anchorWidth = anchorNode.offsetWidth || 256;
+        const anchorWidth = anchorNode.offsetWidth || PRODUCT_CHIP_WIDTH;
         const anchorHeight = anchorNode.offsetHeight || 40;
         const scaleX = anchorRect.width / anchorWidth;
         const scaleY = anchorRect.height / anchorHeight;
@@ -241,22 +253,18 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onP
     if (!settings.mobileMultiSelect) setMobileMultiSelect(false);
   }, [settings.mobileMultiSelect]);
 
-  const alignSelected = (mode: "left" | "right" | "center") => {
+  const distributeSelectedVertically = () => {
     if (selectedIds.length < 2) return;
-    const widths = new Map<number, number>();
-    selectedIds.forEach((id) => {
-      const node = canvasRef.current?.querySelector<HTMLElement>(`.product-chip[data-product-id="${id}"]`);
-      widths.set(id, node?.offsetWidth ?? 192);
-    });
-    const selectedProducts = products.filter((product) => selectedIds.includes(product.productId));
-    const left = Math.min(...selectedProducts.map((product) => product.x));
-    const right = Math.max(...selectedProducts.map((product) => product.x + (widths.get(product.productId) ?? 192)));
-    const center = (left + right) / 2;
+    const selectedProducts = products
+      .filter((product) => selectedIds.includes(product.productId))
+      .sort((a, b) => a.y - b.y || a.x - b.x);
+    const firstY = selectedProducts[0]?.y;
+    if (firstY === undefined) return;
+    const chipHeight = canvasRef.current?.querySelector<HTMLElement>(".product-chip")?.offsetHeight ?? 40;
+    const gap = 5;
     const nextProducts = products.map((product) => {
-      if (!selectedIds.includes(product.productId)) return product;
-      const width = widths.get(product.productId) ?? 192;
-      const x = mode === "left" ? left : mode === "right" ? right - width : center - width / 2;
-      return { ...product, x };
+      const index = selectedProducts.findIndex((item) => item.productId === product.productId);
+      return index < 0 ? product : { ...product, y: firstY + index * (chipHeight + gap) };
     });
     if (!canPlaceProducts(nextProducts, selectedIds)) {
       showInvalidPositionNotice();
@@ -270,18 +278,63 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onP
     setContextMenu(null);
   };
 
-  const distributeSelectedVertically = () => {
+  const arrangeSelectedInGrid = (columnCount?: number) => {
     if (selectedIds.length < 2) return;
     const selectedProducts = products
       .filter((product) => selectedIds.includes(product.productId))
       .sort((a, b) => a.y - b.y || a.x - b.x);
-    const firstY = selectedProducts[0]?.y;
-    if (firstY === undefined) return;
-    const chipHeight = canvasRef.current?.querySelector<HTMLElement>(".product-chip")?.offsetHeight ?? 40;
+    const first = selectedProducts[0];
+    if (!first) return;
+    const columns = Math.min(
+      selectedProducts.length,
+      columnCount ?? Math.ceil(Math.sqrt(selectedProducts.length)),
+    );
+    const chipHeight = canvasRef.current?.querySelector<HTMLElement>(".product-chip")?.offsetHeight ?? PRODUCT_CHIP_HEIGHT;
     const gap = 5;
     const nextProducts = products.map((product) => {
       const index = selectedProducts.findIndex((item) => item.productId === product.productId);
-      return index < 0 ? product : { ...product, y: firstY + index * (chipHeight + gap) };
+      if (index < 0) return product;
+      return {
+        ...product,
+        x: first.x + (index % columns) * (PRODUCT_CHIP_WIDTH + gap),
+        y: first.y + Math.floor(index / columns) * (chipHeight + gap),
+      };
+    });
+    if (!canPlaceProducts(nextProducts, selectedIds)) {
+      showInvalidPositionNotice();
+      setContextMenu(null);
+      setGridMenuOpen(false);
+      return;
+    }
+    onProductsChange(nextProducts);
+    void updateProductPositionsAction({ branchId, zone, positions: nextProducts.filter((product) => selectedIds.includes(product.productId)).map(({ productId, x, y }) => ({ productId, x, y })) }).then((result) => {
+      if (!result.ok) onProductsChange(products);
+    });
+    setContextMenu(null);
+    setGridMenuOpen(false);
+  };
+
+  const distributeSelectedHorizontally = () => {
+    if (selectedIds.length < 2) return;
+    const selectedProducts = products
+      .filter((product) => selectedIds.includes(product.productId))
+      .sort((a, b) => a.x - b.x || a.y - b.y);
+    const firstX = selectedProducts[0]?.x;
+    if (firstX === undefined) return;
+    const widths = new Map<number, number>();
+    selectedProducts.forEach((product) => {
+      const node = canvasRef.current?.querySelector<HTMLElement>(`.product-chip[data-product-id="${product.productId}"]`);
+      widths.set(product.productId, node?.offsetWidth ?? PRODUCT_CHIP_WIDTH);
+    });
+    const positions = new Map<number, number>();
+    let currentX = firstX;
+    selectedProducts.forEach((product) => {
+      positions.set(product.productId, currentX);
+      currentX += (widths.get(product.productId) ?? PRODUCT_CHIP_WIDTH) + 5;
+    });
+    const nextProducts = products.map((product) => {
+      const x = positions.get(product.productId);
+      return x === undefined ? product : { ...product, x };
     });
     if (!canPlaceProducts(nextProducts, selectedIds)) {
       showInvalidPositionNotice();
@@ -387,8 +440,13 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onP
     return () => { window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp); };
   }, []);
 
+  const contextMenuGroupId = contextMenu
+    ? products.find((product) => product.productId === contextMenu.productId)?.groupId
+      ?? products.find((product) => contextMenu.selectedIds.includes(product.productId) && product.groupId)?.groupId
+    : null;
+
   return (
-    <DndContext id="warehouse-canvas" sensors={sensors} onDragStart={(event: DragStartEvent) => { if (mobileMultiSelect || multiTouchGestureRef.current) return; const productId = Number(event.active.id); const ids = selectedIds.includes(productId) ? selectedIds : [productId]; setSelectedIds(ids); setDragPreview({ ids, x: 0, y: 0 }); setDragging(true); setTrashVisible(settings.mobileTrashDropZone && !isTouchDevice); clearTrashTimer(); if (settings.mobileTrashDropZone && isTouchDevice) trashTimer.current = setTimeout(() => setTrashVisible(true), 100); }} onDragMove={(event: DragMoveEvent) => { if (multiTouchGestureRef.current) return; const scale = transformRef.current?.instance.transformState.scale ?? 1; setDragPreview((preview) => preview ? { ...preview, x: event.delta.x / scale, y: event.delta.y / scale } : null); }} onDragCancel={() => { setDragging(false); setTrashVisible(false); clearTrashTimer(); setDragPreview(null); }} onDragEnd={async (event: DragEndEvent) => {
+    <DndContext id="warehouse-canvas" sensors={sensors} onDragStart={(event: DragStartEvent) => { if (mobileMultiSelect || multiTouchGestureRef.current) return; const productId = Number(event.active.id); const ids = getDragProductIds(productId); setSelectedIds(ids); setDragPreview({ ids, x: 0, y: 0 }); setDragging(true); setTrashVisible(settings.mobileTrashDropZone && !isTouchDevice); clearTrashTimer(); if (settings.mobileTrashDropZone && isTouchDevice) trashTimer.current = setTimeout(() => setTrashVisible(true), 100); }} onDragMove={(event: DragMoveEvent) => { if (multiTouchGestureRef.current) return; const scale = transformRef.current?.instance.transformState.scale ?? 1; setDragPreview((preview) => preview ? { ...preview, x: event.delta.x / scale, y: event.delta.y / scale } : null); }} onDragCancel={() => { setDragging(false); setTrashVisible(false); clearTrashTimer(); setDragPreview(null); }} onDragEnd={async (event: DragEndEvent) => {
       setDragging(false);
       setTrashVisible(false);
       clearTrashTimer();
@@ -396,7 +454,7 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onP
       if (multiTouchGestureRef.current) return;
       if (!event.active || (event.delta.x === 0 && event.delta.y === 0)) return;
       const productId = Number(event.active.id);
-      const movingIds = selectedIds.includes(productId) ? selectedIds : [productId];
+      const movingIds = getDragProductIds(productId);
       const previous = products.find((product) => product.productId === productId);
       if (!previous) return;
       const scale = transformRef.current?.instance.transformState.scale ?? 1;
@@ -486,7 +544,7 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onP
               onRequestAdd();
             }
           }}
-          onClick={(event) => { setContextMenu(null); const target = event.target instanceof HTMLElement ? event.target : null; if (!target?.closest(".product-chip") && !selectionMoved.current) { setSelectedIds([]); setActiveProductId(null); setMobileMultiSelect(false); } selectionMoved.current = false; }}
+          onClick={(event) => { setContextMenu(null); setGridMenuOpen(false); const target = event.target instanceof HTMLElement ? event.target : null; if (!target?.closest(".product-chip") && !selectionMoved.current) { setSelectedIds([]); setActiveProductId(null); setMobileMultiSelect(false); } selectionMoved.current = false; }}
         >
           {selectionBox && <div className="pointer-events-none absolute z-20 border border-blue-500 bg-blue-400/20" style={{ left: selectionBox.x, top: selectionBox.y, width: selectionBox.width, height: selectionBox.height }} />}
           {floorPlanNotice && (
@@ -529,12 +587,14 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onP
                     onLongPress={(x, y) => {
                       const nextSelectedIds = selectedIds.includes(product.productId) ? selectedIds : [product.productId];
                       setSelectedIds(nextSelectedIds);
+                      setGridMenuOpen(false);
                       setContextMenu({ productId: product.productId, x, y, selectedIds: nextSelectedIds });
                     }}
                     onContextMenu={(event) => {
                       event.preventDefault();
                       const nextSelectedIds = selectedIds.includes(product.productId) ? selectedIds : [product.productId];
                       setSelectedIds(nextSelectedIds);
+                      setGridMenuOpen(false);
                       setContextMenu({ productId: product.productId, x: event.clientX, y: event.clientY, selectedIds: nextSelectedIds });
                     }}
                   />
@@ -546,13 +606,18 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onP
       )}
     </TransformWrapper>
     {contextMenu && <div className="fixed z-50 rounded-md border bg-white py-1 text-sm shadow-lg" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={(event) => event.stopPropagation()}>
-      <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100" disabled={contextMenu.selectedIds.length < 2} onClick={() => { const ids = contextMenu.selectedIds; const groupId = crypto.randomUUID(); void setProductLayoutsGroupAction({ branchId, zone, productIds: ids, groupId }).then((result) => { if (result.ok) onProductsChange(products.map((product) => ids.includes(product.productId) ? { ...product, groupId } : product)); }); setContextMenu(null); }}>Group ({contextMenu.selectedIds.length})</button>
+      <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100" disabled={contextMenu.selectedIds.length < 2} onClick={() => { const ids = contextMenu.selectedIds; const groupId = crypto.randomUUID(); void setProductLayoutsGroupAction({ branchId, zone, productIds: ids, groupId }).then((result) => { if (result.ok) onProductsChange(products.map((product) => ids.includes(product.productId) ? { ...product, groupId } : product)); }); setContextMenu(null); setGridMenuOpen(false); }}>Group</button>
       <div className="my-1 border-t" />
-      <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-400" disabled={contextMenu.selectedIds.length < 2} onClick={() => alignSelected("left")}>Căn trái theo chiều dọc</button>
-      <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-400" disabled={contextMenu.selectedIds.length < 2} onClick={() => alignSelected("right")}>Căn phải theo chiều dọc</button>
-      <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-400" disabled={contextMenu.selectedIds.length < 2} onClick={() => alignSelected("center")}>Căn giữa theo chiều dọc</button>
+      <div className="relative">
+        <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-400" disabled={contextMenu.selectedIds.length < 2} onClick={() => setGridMenuOpen((open) => !open)}>Sắp xếp theo lưới 5px ›</button>
+        {gridMenuOpen && <div className="absolute left-full top-0 z-10 ml-1 min-w-32 rounded-md border bg-white py-1 text-sm shadow-lg">
+          <button className="block w-full whitespace-nowrap px-3 py-1.5 text-left hover:bg-slate-100" onClick={() => arrangeSelectedInGrid()}>Tự động</button>
+          {[2, 3, 4, 5].map((columns) => <button key={columns} className="block w-full whitespace-nowrap px-3 py-1.5 text-left hover:bg-slate-100" onClick={() => arrangeSelectedInGrid(columns)}>{columns} cột</button>)}
+        </div>}
+      </div>
       <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-400" disabled={contextMenu.selectedIds.length < 2} onClick={distributeSelectedVertically}>Xếp dọc, cách nhau 5px</button>
-      {products.find((product) => product.productId === contextMenu.productId)?.groupId && <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100" onClick={() => { const group = products.find((product) => product.productId === contextMenu.productId)?.groupId; const ids = products.filter((product) => product.groupId === group).map((product) => product.productId); void setProductLayoutsGroupAction({ branchId, zone, productIds: ids, groupId: null }).then((result) => { if (result.ok) onProductsChange(products.map((product) => ids.includes(product.productId) ? { ...product, groupId: null } : product)); }); setContextMenu(null); }}>Ungroup</button>}
+      <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-400" disabled={contextMenu.selectedIds.length < 2} onClick={distributeSelectedHorizontally}>Xếp ngang, cách nhau 5px</button>
+      {contextMenuGroupId && <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100" onClick={() => { const ids = products.filter((product) => product.groupId === contextMenuGroupId).map((product) => product.productId); void setProductLayoutsGroupAction({ branchId, zone, productIds: ids, groupId: null }).then((result) => { if (result.ok) onProductsChange(products.map((product) => ids.includes(product.productId) ? { ...product, groupId: null } : product)); }); setContextMenu(null); setGridMenuOpen(false); }}>Ungroup</button>}
     </div>}
     {settings.mobileTrashDropZone && dragging && trashVisible && <TrashDropZone />}
     </DndContext>

@@ -33,7 +33,7 @@ function drawFloorPlan(canvas: HTMLCanvasElement, plan: WarehouseFloorPlanConfig
 
   canvas.width = planRect.width;
   canvas.height = planRect.height;
-  const excludedArea = plan.excludedAreas[0];
+  const excludedArea = plan.notchedBoundary ? plan.excludedAreas[0] : undefined;
 
   context.fillStyle = "#e2e8f0";
   context.fillRect(0, usableRect.height, planRect.width, planRect.height - usableRect.height);
@@ -88,6 +88,12 @@ function drawFloorPlan(canvas: HTMLCanvasElement, plan: WarehouseFloorPlanConfig
   context.lineWidth = 8;
   context.stroke();
 
+  for (const area of plan.highlightAreas ?? []) {
+    context.strokeStyle = "#1e3a8a";
+    context.lineWidth = 12;
+    context.strokeRect(area.x, area.y, area.width, area.height);
+  }
+
   for (const area of plan.additionalUsableAreas) {
     context.fillStyle = "#eff6ff";
     context.fillRect(area.x, area.y, area.width, area.height);
@@ -133,7 +139,8 @@ function drawFloorPlan(canvas: HTMLCanvasElement, plan: WarehouseFloorPlanConfig
   }
 
   for (const area of plan.excludedAreas) {
-    context.fillStyle = "#fee2e2";
+    const muted = area.muted === true;
+    context.fillStyle = muted ? "#e2e8f0" : "#fee2e2";
     context.fillRect(area.x, area.y, area.width, area.height);
 
     context.save();
@@ -149,31 +156,50 @@ function drawFloorPlan(canvas: HTMLCanvasElement, plan: WarehouseFloorPlanConfig
       context.moveTo(area.x + offset, area.y + area.height);
       context.lineTo(area.x + offset + area.height, area.y);
     }
-    context.strokeStyle = "#fecaca";
+    context.strokeStyle = muted ? "#cbd5e1" : "#fecaca";
     context.lineWidth = 10;
     context.stroke();
     context.restore();
 
-    context.strokeStyle = "#b91c1c";
+    context.strokeStyle = muted ? "#94a3b8" : "#b91c1c";
     context.lineWidth = 8;
     context.strokeRect(area.x, area.y, area.width, area.height);
 
-    context.fillStyle = "#991b1b";
+    context.fillStyle = muted ? "#475569" : "#991b1b";
     context.font = "700 54px system-ui, sans-serif";
     context.textAlign = "center";
     context.textBaseline = "middle";
     context.fillText(area.name, area.x + area.width / 2, area.y + area.height / 2 - 28);
 
-    context.fillStyle = "#b91c1c";
+    context.fillStyle = muted ? "#64748b" : "#b91c1c";
     context.font = "600 34px system-ui, sans-serif";
-    context.fillText(`Không sử dụng · ${area.width / plan.pixelsPerMeter} × ${area.height / plan.pixelsPerMeter} m`, area.x + area.width / 2, area.y + area.height / 2 + 38);
+    context.fillText(`${muted ? "Không đặt chip" : "Không sử dụng"} · ${area.width / plan.pixelsPerMeter} × ${area.height / plan.pixelsPerMeter} m`, area.x + area.width / 2, area.y + area.height / 2 + 38);
   }
 
-  context.fillStyle = "#475569";
-  context.font = "700 42px system-ui, sans-serif";
-  context.textAlign = "center";
-  context.textBaseline = "middle";
-  context.fillText("Khu soạn hàng · ngoài Kho Đông", planRect.width * 0.68, usableRect.height + (planRect.height - usableRect.height) / 2);
+  for (const area of plan.overviewAreas ?? []) {
+    context.save();
+    context.setLineDash([18, 14]);
+    context.strokeStyle = area.muted ? "#94a3b8" : "#b91c1c";
+    context.lineWidth = 6;
+    context.strokeRect(area.x, area.y, area.width, area.height);
+    context.restore();
+
+    context.fillStyle = area.muted ? "#64748b" : "#991b1b";
+    context.font = "600 30px system-ui, sans-serif";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText(area.name, area.x + area.width / 2, area.y + area.height / 2 - 20);
+    context.font = "500 24px system-ui, sans-serif";
+    context.fillText(`${area.width / plan.pixelsPerMeter} × ${area.height / plan.pixelsPerMeter} m`, area.x + area.width / 2, area.y + area.height / 2 + 20);
+  }
+
+  if (plan.showPackingLabel !== false) {
+    context.fillStyle = "#475569";
+    context.font = "700 42px system-ui, sans-serif";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText("Khu soạn hàng · ngoài Kho Đông", planRect.width * 0.68, usableRect.height + (planRect.height - usableRect.height) / 2);
+  }
 }
 
 export const WarehouseFloorPlan = memo(function WarehouseFloorPlan({ plan }: { plan: WarehouseFloorPlanConfig }) {
@@ -200,10 +226,10 @@ export const WarehouseFloorPlan = memo(function WarehouseFloorPlan({ plan }: { p
     >
       {settings.showFloorPlanInfo && <div className="absolute bottom-full left-0 mb-3 whitespace-nowrap rounded-lg border border-blue-200 bg-white/95 px-4 py-2 shadow-sm">
         <div className="text-[52px] font-extrabold leading-none tracking-tight text-blue-900">
-          KHO ĐÔNG · {plan.usableAreaSquareMeters} m²
+          {plan.displayTitle ?? `KHO ĐÔNG · ${plan.usableAreaSquareMeters} m²`}
         </div>
         <div className="mt-2 text-[30px] font-semibold leading-none text-slate-600">
-          Mặt bằng 16 × 16 m · mỗi ô lớn 1 m
+          {plan.displaySubtitle ?? "Mặt bằng 16 × 16 m · mỗi ô lớn 1 m"}
         </div>
       </div>}
 

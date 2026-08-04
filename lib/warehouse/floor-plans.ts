@@ -17,11 +17,17 @@ export type WarehouseFloorPlan = {
   usableHeightMeters: number;
   pixelsPerMeter: number;
   usableAreaSquareMeters: number;
-  excludedAreas: Array<FloorPlanRect & { name: string }>;
+  notchedBoundary?: boolean;
+  displayTitle?: string;
+  displaySubtitle?: string;
+  showPackingLabel?: boolean;
+  excludedAreas: Array<FloorPlanRect & { name: string; muted?: boolean }>;
+  overviewAreas?: Array<FloorPlanRect & { name: string; muted?: boolean }>;
+  highlightAreas?: Array<FloorPlanRect & { name: string }>;
   additionalUsableAreas: Array<FloorPlanRect & { name: string }>;
 };
 
-export const PRODUCT_CHIP_WIDTH = 256;
+export const PRODUCT_CHIP_WIDTH = 205;
 export const PRODUCT_CHIP_HEIGHT = 40;
 
 const CAO_LANH_COLD_FLOOR_PLAN: WarehouseFloorPlan = {
@@ -34,6 +40,8 @@ const CAO_LANH_COLD_FLOOR_PLAN: WarehouseFloorPlan = {
   usableHeightMeters: 16,
   pixelsPerMeter: 100,
   usableAreaSquareMeters: 250,
+  notchedBoundary: true,
+  showPackingLabel: true,
   excludedAreas: [
     {
       name: "Kho Mát",
@@ -54,10 +62,38 @@ const CAO_LANH_COLD_FLOOR_PLAN: WarehouseFloorPlan = {
   ],
 };
 
+const CAO_LANH_DRY_FLOOR_PLAN: WarehouseFloorPlan = {
+  id: "cao-lanh-dry",
+  name: "Kho Khô Cao Lãnh",
+  canvasX: 0,
+  canvasY: 0,
+  widthMeters: 29.91,
+  heightMeters: 65,
+  usableHeightMeters: 65,
+  pixelsPerMeter: 100,
+  usableAreaSquareMeters: 910,
+  displayTitle: "KHO KHÔ CAO LÃNH",
+  displaySubtitle: "Mặt bằng tổng thể · khu đặt chip bên phải khoảng 13,91 × 65 m",
+  showPackingLabel: false,
+  excludedAreas: [
+    { name: "Kho Đông", x: 0, y: 0, width: 16 * 100, height: 16 * 100, muted: true },
+    { name: "Khu Soạn Hàng", x: 0, y: 16 * 100, width: 16 * 100, height: 10 * 100, muted: true },
+  ],
+  overviewAreas: [
+    { name: "Kho Mát 2", x: 11 * 100, y: 0, width: 5 * 100, height: 6 * 100, muted: true },
+    { name: "Kho Mát 1", x: 0, y: 16 * 100, width: 4 * 100, height: 6 * 100, muted: true },
+  ],
+  highlightAreas: [
+    { name: "Kho Khô", x: 16 * 100, y: 0, width: 13.91 * 100, height: 65 * 100 },
+  ],
+  additionalUsableAreas: [],
+};
+
 export function getWarehouseFloorPlan(branchId: number, zone: string): WarehouseFloorPlan | null {
-  return branchId === WAREHOUSES.caoLanh.id && zone === "cold"
-    ? CAO_LANH_COLD_FLOOR_PLAN
-    : null;
+  if (branchId !== WAREHOUSES.caoLanh.id) return null;
+  if (zone === "cold") return CAO_LANH_COLD_FLOOR_PLAN;
+  if (zone === "dry") return CAO_LANH_DRY_FLOOR_PLAN;
+  return null;
 }
 
 export function getFloorPlanCanvasRect(plan: WarehouseFloorPlan): FloorPlanRect {

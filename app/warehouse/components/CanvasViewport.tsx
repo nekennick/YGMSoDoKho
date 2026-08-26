@@ -6,7 +6,7 @@ import { useDroppable } from "@dnd-kit/core";
 import { TransformComponent, TransformWrapper, type ReactZoomPanPinchRef } from "react-zoom-pan-pinch";
 import type { CanvasProduct } from "@/lib/product-catalog/merge";
 import { useKeyboard } from "@/app/warehouse/hooks/useKeyboard";
-import { updateProductPositionAction, updateProductPositionsAction, setProductLayoutsGroupAction } from "@/app/warehouse/actions/product-layout";
+import { restoreProductLayoutsAction, updateProductPositionAction, updateProductPositionsAction, setProductLayoutsGroupAction } from "@/app/warehouse/actions/product-layout";
 import { deleteProductLayoutAction } from "@/app/warehouse/actions/product-layout";
 import { WarehouseFloorPlan } from "@/app/warehouse/components/WarehouseFloorPlan";
 import {
@@ -105,7 +105,7 @@ function DraggableProduct({ product, scale, selected, groupDelta, dragDisabled, 
   );
 }
 
-export function CanvasViewport({ products, branchId, zone, onProductsChange, onProductsDeleted, onRequestAdd, onRegisterCenterPosition, focusProductId }: { products: CanvasProduct[]; branchId: number; zone: string; onProductsChange: (products: CanvasProduct[]) => void; onProductsDeleted?: (products: CanvasProduct[]) => void; onRequestAdd: () => void; onRegisterCenterPosition?: (getter: (() => { x: number; y: number }) | null) => void; focusProductId?: number | null }) {
+export function CanvasViewport({ products, branchId, zone, onProductsChange, onProductsDeleted, onProductsRestored, onRequestAdd, onRegisterCenterPosition, focusProductId }: { products: CanvasProduct[]; branchId: number; zone: string; onProductsChange: (products: CanvasProduct[]) => void; onProductsDeleted?: (products: CanvasProduct[]) => void; onProductsRestored?: (products: CanvasProduct[]) => void; onRequestAdd: () => void; onRegisterCenterPosition?: (getter: (() => { x: number; y: number }) | null) => void; focusProductId?: number | null }) {
   const { spacePressed } = useKeyboard();
   const { settings } = useWarehouseSettings();
   const floorPlan = getWarehouseFloorPlan(branchId, zone);
@@ -127,7 +127,65 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onP
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const transformRef = useRef<ReactZoomPanPinchRef | null>(null);
   const productsRef = useRef(products);
+  const undoHistory = useRef<CanvasProduct[][]>([]);
+  const pendingMutations = useRef(new Set<Promise<unknown>>());
+  const [undoCount, setUndoCount] = useState(0);
   productsRef.current = products;
+
+  const saveUndoState = useCallback((previousProducts: CanvasProduct[]) => {
+    const snapshot = previousProducts.map((product) => ({ ...product }));
+    undoHistory.current = [...undoHistory.current, snapshot].slice(-10);
+    setUndoCount(undoHistory.current.length);
+    return snapshot;
+  }, []);
+
+  const discardUndoState = useCallback((snapshot: CanvasProduct[]) => {
+    const nextHistory = undoHistory.current.filter((entry) => entry !== snapshot);
+    const removed = nextHistory.length !== undoHistory.current.length;
+    undoHistory.current = nextHistory;
+    setUndoCount(nextHistory.length);
+    return removed;
+  }, []);
+
+  const trackMutation = useCallback(<T,>(mutation: Promise<T>) => {
+    pendingMutations.current.add(mutation);
+    void mutation.then(
+      () => pendingMutations.current.delete(mutation),
+      () => pendingMutations.current.delete(mutation),
+    );
+    return mutation;
+  }, []);
+
+  const undoLastAction = useCallback(() => {
+    const previousProducts = undoHistory.current.at(-1);
+    if (!previousProducts) return;
+    undoHistory.current = undoHistory.current.slice(0, -1);
+    setUndoCount(undoHistory.current.length);
+    onProductsChange(previousProducts);
+    onProductsRestored?.(previousProducts);
+    setSelectedIds((ids) => ids.filter((id) => previousProducts.some((product) => product.productId === id)));
+    setContextMenu(null);
+    setGridMenuOpen(false);
+
+    const pendingBeforeUndo = [...pendingMutations.current];
+    const persistence = Promise.allSettled(pendingBeforeUndo).then(() => (
+      restoreProductLayoutsAction({
+        branchId,
+        zone,
+        products: previousProducts.map(({ productId, x, y, color, groupId }) => ({ productId, x, y, color, groupId })),
+      })
+    ));
+    void trackMutation(persistence).then(
+      (result) => { if (!result.ok) setFloorPlanNotice(result.message); },
+      () => setFloorPlanNotice("Không thể lưu thao tác hoàn tác."),
+    );
+  }, [branchId, onProductsChange, onProductsRestored, trackMutation, zone]);
+
+  useEffect(() => {
+    undoHistory.current = [];
+    pendingMutations.current.clear();
+    setUndoCount(0);
+  }, [branchId, zone]);
 
   const normalizePosition = useCallback((position: { x: number; y: number }) => (
     floorPlan ? findNearestValidFloorPlanPosition(floorPlan, position) : position
@@ -258,22 +316,27 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onP
     const selectedProducts = products
       .filter((product) => selectedIds.includes(product.productId))
       .sort((a, b) => a.y - b.y || a.x - b.x);
-    const firstY = selectedProducts[0]?.y;
-    if (firstY === undefined) return;
+    const first = selectedProducts[0];
+    if (!first) return;
     const chipHeight = canvasRef.current?.querySelector<HTMLElement>(".product-chip")?.offsetHeight ?? 40;
     const gap = 5;
     const nextProducts = products.map((product) => {
       const index = selectedProducts.findIndex((item) => item.productId === product.productId);
-      return index < 0 ? product : { ...product, y: firstY + index * (chipHeight + gap) };
+      return index < 0 ? product : {
+        ...product,
+        x: first.x,
+        y: first.y + index * (chipHeight + gap),
+      };
     });
     if (!canPlaceProducts(nextProducts, selectedIds)) {
       showInvalidPositionNotice();
       setContextMenu(null);
       return;
     }
+    const undoState = saveUndoState(products);
     onProductsChange(nextProducts);
-    void updateProductPositionsAction({ branchId, zone, positions: nextProducts.filter((product) => selectedIds.includes(product.productId)).map(({ productId, x, y }) => ({ productId, x, y })) }).then((result) => {
-      if (!result.ok) onProductsChange(products);
+    void trackMutation(updateProductPositionsAction({ branchId, zone, positions: nextProducts.filter((product) => selectedIds.includes(product.productId)).map(({ productId, x, y }) => ({ productId, x, y })) })).then((result) => {
+      if (!result.ok && discardUndoState(undoState)) onProductsChange(products);
     });
     setContextMenu(null);
   };
@@ -306,9 +369,10 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onP
       setGridMenuOpen(false);
       return;
     }
+    const undoState = saveUndoState(products);
     onProductsChange(nextProducts);
-    void updateProductPositionsAction({ branchId, zone, positions: nextProducts.filter((product) => selectedIds.includes(product.productId)).map(({ productId, x, y }) => ({ productId, x, y })) }).then((result) => {
-      if (!result.ok) onProductsChange(products);
+    void trackMutation(updateProductPositionsAction({ branchId, zone, positions: nextProducts.filter((product) => selectedIds.includes(product.productId)).map(({ productId, x, y }) => ({ productId, x, y })) })).then((result) => {
+      if (!result.ok && discardUndoState(undoState)) onProductsChange(products);
     });
     setContextMenu(null);
     setGridMenuOpen(false);
@@ -341,9 +405,10 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onP
       setContextMenu(null);
       return;
     }
+    const undoState = saveUndoState(products);
     onProductsChange(nextProducts);
-    void updateProductPositionsAction({ branchId, zone, positions: nextProducts.filter((product) => selectedIds.includes(product.productId)).map(({ productId, x, y }) => ({ productId, x, y })) }).then((result) => {
-      if (!result.ok) onProductsChange(products);
+    void trackMutation(updateProductPositionsAction({ branchId, zone, positions: nextProducts.filter((product) => selectedIds.includes(product.productId)).map(({ productId, x, y }) => ({ productId, x, y })) })).then((result) => {
+      if (!result.ok && discardUndoState(undoState)) onProductsChange(products);
     });
     setContextMenu(null);
   };
@@ -352,6 +417,11 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onP
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.target instanceof HTMLElement && (event.target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(event.target.tagName))) return;
       const usesCommand = event.ctrlKey || event.metaKey;
+      if (usesCommand && event.key.toLowerCase() === "z") {
+        event.preventDefault();
+        void undoLastAction();
+        return;
+      }
       if (usesCommand && event.key.toLowerCase() === "a") {
         event.preventDefault();
         setSelectedIds(products.map((product) => product.productId));
@@ -375,7 +445,10 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onP
           : selectedIds;
         const groupId = event.shiftKey ? null : crypto.randomUUID();
         void setProductLayoutsGroupAction({ branchId, zone, productIds: ids, groupId }).then((result) => {
-          if (result.ok) onProductsChange(products.map((product) => ids.includes(product.productId) ? { ...product, groupId } : product));
+          if (result.ok) {
+            onProductsChange(products.map((product) => ids.includes(product.productId) ? { ...product, groupId } : product));
+            saveUndoState(products);
+          }
         });
         return;
       }
@@ -388,6 +461,7 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onP
             const deletedProducts = products.filter((product) => ids.includes(product.productId));
             onProductsChange(products.filter((product) => !ids.includes(product.productId)));
             onProductsDeleted?.(deletedProducts);
+            saveUndoState(products);
             setSelectedIds([]);
             setActiveProductId(null);
           }
@@ -404,13 +478,16 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onP
           showInvalidPositionNotice();
           return;
         }
+        const undoState = saveUndoState(products);
         onProductsChange(nextProducts);
-        void updateProductPositionsAction({ branchId, zone, positions: nextProducts.filter((product) => selectedIds.includes(product.productId)).map(({ productId, x, y }) => ({ productId, x, y })) });
+        void trackMutation(updateProductPositionsAction({ branchId, zone, positions: nextProducts.filter((product) => selectedIds.includes(product.productId)).map(({ productId, x, y }) => ({ productId, x, y })) })).then((result) => {
+          if (!result.ok && discardUndoState(undoState)) onProductsChange(products);
+        });
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [activeProductId, branchId, canPlaceProducts, onProductsChange, onProductsDeleted, products, selectedIds, showInvalidPositionNotice, zone]);
+  }, [activeProductId, branchId, canPlaceProducts, discardUndoState, onProductsChange, onProductsDeleted, products, saveUndoState, selectedIds, showInvalidPositionNotice, trackMutation, undoLastAction, zone]);
 
   useEffect(() => {
     const onMove = (event: PointerEvent) => {
@@ -467,6 +544,7 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onP
           const deletedProducts = products.filter((item) => movingIds.includes(item.productId));
           onProductsChange(products.filter((item) => !movingIds.includes(item.productId)));
           onProductsDeleted?.(deletedProducts);
+          saveUndoState(products);
         }
         return;
       }
@@ -474,12 +552,13 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onP
         showInvalidPositionNotice();
         return;
       }
+      const undoState = saveUndoState(products);
       onProductsChange(nextProducts);
       const result = movingIds.length > 1
-        ? await updateProductPositionsAction({ branchId, zone, positions: nextProducts.filter((item) => movingIds.includes(item.productId)).map(({ productId: id, x, y }) => ({ productId: id, x, y })) })
-        : await updateProductPositionAction({ productId, branchId, zone, x: nextProducts.find((item) => item.productId === productId)?.x ?? previous.x, y: nextProducts.find((item) => item.productId === productId)?.y ?? previous.y });
+        ? await trackMutation(updateProductPositionsAction({ branchId, zone, positions: nextProducts.filter((item) => movingIds.includes(item.productId)).map(({ productId: id, x, y }) => ({ productId: id, x, y })) }))
+        : await trackMutation(updateProductPositionAction({ productId, branchId, zone, x: nextProducts.find((item) => item.productId === productId)?.x ?? previous.x, y: nextProducts.find((item) => item.productId === productId)?.y ?? previous.y }));
       if (!result.ok) {
-        onProductsChange(products);
+        if (discardUndoState(undoState)) onProductsChange(products);
       }
     }}>
     <TransformWrapper
@@ -606,7 +685,9 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onP
       )}
     </TransformWrapper>
     {contextMenu && <div className="fixed z-50 rounded-md border bg-white py-1 text-sm shadow-lg" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={(event) => event.stopPropagation()}>
-      <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100" disabled={contextMenu.selectedIds.length < 2} onClick={() => { const ids = contextMenu.selectedIds; const groupId = crypto.randomUUID(); void setProductLayoutsGroupAction({ branchId, zone, productIds: ids, groupId }).then((result) => { if (result.ok) onProductsChange(products.map((product) => ids.includes(product.productId) ? { ...product, groupId } : product)); }); setContextMenu(null); setGridMenuOpen(false); }}>Group</button>
+      <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-400" disabled={!undoCount} onClick={undoLastAction}>{`Hoàn tác (Ctrl+Z)${undoCount ? ` · ${undoCount}` : ""}`}</button>
+      <div className="my-1 border-t" />
+      <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100" disabled={contextMenu.selectedIds.length < 2} onClick={() => { const ids = contextMenu.selectedIds; const groupId = crypto.randomUUID(); void setProductLayoutsGroupAction({ branchId, zone, productIds: ids, groupId }).then((result) => { if (result.ok) { onProductsChange(products.map((product) => ids.includes(product.productId) ? { ...product, groupId } : product)); saveUndoState(products); } }); setContextMenu(null); setGridMenuOpen(false); }}>Group</button>
       <div className="my-1 border-t" />
       <div className="relative">
         <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-400" disabled={contextMenu.selectedIds.length < 2} onClick={() => setGridMenuOpen((open) => !open)}>Sắp xếp theo lưới 5px ›</button>
@@ -617,7 +698,7 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onP
       </div>
       <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-400" disabled={contextMenu.selectedIds.length < 2} onClick={distributeSelectedVertically}>Xếp dọc, cách nhau 5px</button>
       <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-400" disabled={contextMenu.selectedIds.length < 2} onClick={distributeSelectedHorizontally}>Xếp ngang, cách nhau 5px</button>
-      {contextMenuGroupId && <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100" onClick={() => { const ids = products.filter((product) => product.groupId === contextMenuGroupId).map((product) => product.productId); void setProductLayoutsGroupAction({ branchId, zone, productIds: ids, groupId: null }).then((result) => { if (result.ok) onProductsChange(products.map((product) => ids.includes(product.productId) ? { ...product, groupId: null } : product)); }); setContextMenu(null); setGridMenuOpen(false); }}>Ungroup</button>}
+      {contextMenuGroupId && <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100" onClick={() => { const ids = products.filter((product) => product.groupId === contextMenuGroupId).map((product) => product.productId); void setProductLayoutsGroupAction({ branchId, zone, productIds: ids, groupId: null }).then((result) => { if (result.ok) { onProductsChange(products.map((product) => ids.includes(product.productId) ? { ...product, groupId: null } : product)); saveUndoState(products); } }); setContextMenu(null); setGridMenuOpen(false); }}>Ungroup</button>}
     </div>}
     {settings.mobileTrashDropZone && dragging && trashVisible && <TrashDropZone />}
     </DndContext>

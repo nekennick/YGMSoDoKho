@@ -39,6 +39,7 @@ export async function createProductLayout(input: CreateProductLayoutInput): Prom
       x: input.x,
       y: input.y,
       ...(input.color === undefined ? {} : { color: input.color }),
+      ...(input.groupId === undefined ? {} : { groupId: input.groupId }),
     },
   });
   return toRecord(layout);
@@ -53,6 +54,7 @@ export async function createProductLayouts(inputs: CreateProductLayoutInput[]): 
       x: input.x,
       y: input.y,
       ...(input.color === undefined ? {} : { color: input.color }),
+      ...(input.groupId === undefined ? {} : { groupId: input.groupId }),
     },
   })));
   return layouts.map(toRecord);
@@ -97,4 +99,25 @@ export async function deleteProductLayout(productId: number, branchId: number, z
 
 export async function setProductLayoutsGroup(productIds: number[], branchId: number, zone: string, groupId: string | null): Promise<void> {
   await prisma.productLayout.updateMany({ where: { branchId, zone, productId: { in: productIds } }, data: { groupId } });
+}
+
+export async function restoreProductLayouts(inputs: Array<CreateProductLayoutInput & { groupId?: string | null }>): Promise<void> {
+  await prisma.$transaction(inputs.map((input) => prisma.productLayout.upsert({
+    where: { branchId_zone_productId: { branchId: input.branchId, zone: input.zone, productId: input.productId } },
+    create: {
+      productId: input.productId,
+      branchId: input.branchId,
+      zone: input.zone,
+      x: input.x,
+      y: input.y,
+      ...(input.color === undefined ? {} : { color: input.color }),
+      ...(input.groupId === undefined ? {} : { groupId: input.groupId }),
+    },
+    update: {
+      x: input.x,
+      y: input.y,
+      ...(input.color === undefined ? {} : { color: input.color }),
+      ...(input.groupId === undefined ? {} : { groupId: input.groupId }),
+    },
+  })));
 }

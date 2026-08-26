@@ -18,6 +18,7 @@ export type CreateProductLayoutInput = {
   x: number;
   y: number;
   color?: string;
+  groupId?: string | null;
 };
 
 export type UpdateProductPositionInput = {

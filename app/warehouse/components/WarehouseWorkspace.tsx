@@ -35,6 +35,10 @@ export function WarehouseWorkspace({ result, branchId, zone }: { result: Warehou
       return [...current, ...restored];
     });
   }, []);
+  const removeRestoredProductsFromAvailable = useCallback((restoredProducts: CanvasProduct[]) => {
+    const restoredIds = new Set(restoredProducts.map((product) => product.productId));
+    setAvailableProducts((current) => current.filter((product) => !restoredIds.has(product.productId)));
+  }, []);
   if (!result.ok) {
     return (
       <main className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-8">
@@ -73,7 +77,7 @@ export function WarehouseWorkspace({ result, branchId, zone }: { result: Warehou
         <span className="text-slate-500">{availableProducts.length} sản phẩm có thể thêm</span>
       </div>
       <section className="relative min-h-0 flex-1 overflow-hidden">
-        <CanvasViewport products={canvasProducts} branchId={branchId} zone={zone} onProductsChange={setCanvasProducts} onProductsDeleted={restoreDeletedProducts} onRequestAdd={() => setAddDialogOpen(true)} onRegisterCenterPosition={registerCenterPosition} focusProductId={focusProductId} />
+        <CanvasViewport products={canvasProducts} branchId={branchId} zone={zone} onProductsChange={setCanvasProducts} onProductsDeleted={restoreDeletedProducts} onProductsRestored={removeRestoredProductsFromAvailable} onRequestAdd={() => setAddDialogOpen(true)} onRegisterCenterPosition={registerCenterPosition} focusProductId={focusProductId} />
       </section>
     </main>
   );

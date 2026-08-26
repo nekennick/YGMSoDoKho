@@ -9,6 +9,7 @@ import { deleteProductLayout } from "@/lib/product-layout/repository";
 import { findProductLayoutInBranch } from "@/lib/product-layout/repository";
 import { findProductLayoutsInBranch } from "@/lib/product-layout/repository";
 import { setProductLayoutsGroup } from "@/lib/product-layout/repository";
+import { restoreProductLayouts } from "@/lib/product-layout/repository";
 import { getProductCatalogService } from "@/lib/warehouse/catalog-service";
 import { getWarehouseFloorPlan, isPositionInsideFloorPlan } from "@/lib/warehouse/floor-plans";
 
@@ -176,5 +177,28 @@ export async function setProductLayoutsGroupAction(input: unknown): Promise<{ ok
     return { ok: true, groupId: parsed.data.groupId };
   } catch {
     return { ok: false, message: "Không thể cập nhật nhóm sản phẩm." };
+  }
+}
+
+const restoreLayoutsSchema = z.object({
+  branchId: z.number().int().positive(),
+  zone: z.string().min(1),
+  products: z.array(z.object({
+    productId: z.number().int().positive(),
+    x: z.number().finite(),
+    y: z.number().finite(),
+    color: z.string().min(1),
+    groupId: z.string().nullable().optional(),
+  })).min(1),
+});
+
+export async function restoreProductLayoutsAction(input: unknown): Promise<{ ok: true } | { ok: false; message: string }> {
+  const parsed = restoreLayoutsSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, message: "Dữ liệu hoàn tác không hợp lệ." };
+  try {
+    await restoreProductLayouts(parsed.data.products.map((product) => ({ ...product, branchId: parsed.data.branchId, zone: parsed.data.zone })));
+    return { ok: true };
+  } catch {
+    return { ok: false, message: "Không thể lưu thao tác hoàn tác." };
   }
 }

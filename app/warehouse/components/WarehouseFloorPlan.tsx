@@ -202,7 +202,7 @@ function drawFloorPlan(canvas: HTMLCanvasElement, plan: WarehouseFloorPlanConfig
   }
 }
 
-export const WarehouseFloorPlan = memo(function WarehouseFloorPlan({ plan }: { plan: WarehouseFloorPlanConfig }) {
+export const WarehouseFloorPlan = memo(function WarehouseFloorPlan({ plan, offset = { x: 0, y: 0 }, infoOffset = { x: 0, y: 0 } }: { plan: WarehouseFloorPlanConfig; offset?: { x: number; y: number }; infoOffset?: { x: number; y: number } }) {
   const { settings } = useWarehouseSettings();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const planRect = getFloorPlanCanvasRect(plan);
@@ -218,13 +218,13 @@ export const WarehouseFloorPlan = memo(function WarehouseFloorPlan({ plan }: { p
       aria-label={`${plan.name}, diện tích sử dụng ${plan.usableAreaSquareMeters} mét vuông`}
       className="pointer-events-none absolute"
       style={{
-        left: plan.canvasX,
-        top: plan.canvasY,
+        left: plan.canvasX + offset.x,
+        top: plan.canvasY + offset.y,
         width: planRect.width,
         height: planRect.height,
       }}
     >
-      {settings.showFloorPlanInfo && <div className="absolute bottom-full left-0 mb-3 whitespace-nowrap rounded-lg border border-blue-200 bg-white/95 px-4 py-2 shadow-sm">
+      {settings.showFloorPlanInfo && <div className="absolute bottom-full mb-3 whitespace-nowrap rounded-lg border border-blue-200 bg-white/95 px-4 py-2 shadow-sm" style={{ left: infoOffset.x, transform: `translateY(${infoOffset.y}px)` }}>
         <div className="text-[52px] font-extrabold leading-none tracking-tight text-blue-900">
           {plan.displayTitle ?? `KHO ĐÔNG · ${plan.usableAreaSquareMeters} m²`}
         </div>
@@ -244,7 +244,7 @@ export const WarehouseFloorPlan = memo(function WarehouseFloorPlan({ plan }: { p
         }}
       />
 
-      {settings.showFloorPlanInfo && <div className="absolute left-0 top-full mt-3 rounded-lg border border-blue-200 bg-white/90 px-4 py-2 text-[26px] font-semibold text-slate-700 shadow-sm">
+      {settings.showFloorPlanInfo && <div className="absolute top-full mt-3 rounded-lg border border-blue-200 bg-white/90 px-4 py-2 text-[26px] font-semibold text-slate-700 shadow-sm" style={{ left: infoOffset.x, transform: `translateY(${infoOffset.y}px)` }}>
         Ô chip chuẩn: {chipWidthMeters.toFixed(2)} × {chipHeightMeters.toFixed(2)} m
       </div>}
     </div>

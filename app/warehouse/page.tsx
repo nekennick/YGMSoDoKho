@@ -1,6 +1,6 @@
 import { WarehouseWorkspace } from "@/app/warehouse/components/WarehouseWorkspace";
 import { loadWarehouseInitialData } from "@/lib/warehouse/initial-data";
-import { getWarehouse, getWarehouseZone, WAREHOUSES, WAREHOUSE_ZONES } from "@/lib/warehouse/branches";
+import { getWarehouse, getWarehouseZone, WAREHOUSES } from "@/lib/warehouse/branches";
 import Link from "next/link";
 import { WarehouseSettingsButton, WarehouseSettingsProvider } from "@/app/warehouse/components/WarehouseSettings";
 
@@ -22,9 +22,7 @@ export default async function WarehousePage({ searchParams }: { searchParams: Pr
           <nav className="ml-auto flex shrink-0 gap-1 rounded-md bg-slate-100 p-1 text-xs">
             {Object.values(WAREHOUSES).map((item) => <Link key={item.slug} href={`/warehouse?branch=${item.slug}`} className={`rounded px-2 py-1 ${item.id === warehouse.id ? "bg-white font-semibold text-slate-900 shadow-sm" : "text-slate-500"}`}>{item.name}</Link>)}
           </nav>
-          {warehouse.id === WAREHOUSES.caoLanh.id && <nav className="ml-2 flex shrink-0 gap-1 rounded-md bg-amber-50 p-1 text-xs">
-            {Object.values(WAREHOUSE_ZONES).map((item) => <Link key={item.id} href={`/warehouse?branch=${warehouse.slug}&zone=${item.id}`} className={`rounded px-2 py-1 ${zone === item.id ? "bg-white font-semibold text-slate-900 shadow-sm" : "text-slate-500"}`}>{item.name}</Link>)}
-          </nav>}
+          {warehouse.id === WAREHOUSES.caoLanh.id && <span className="ml-2 hidden rounded-md bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800 sm:inline">Kho Đông + Kho Khô</span>}
           <WarehouseSettingsButton />
         </header>
         <WarehouseWorkspace key={`${warehouse.id}:${zone}`} result={result} branchId={warehouse.id} zone={zone} />

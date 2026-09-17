@@ -9,6 +9,8 @@ export type CanvasProduct = {
   color: string;
   quantity: number;
   groupId?: string | null;
+  /** Khu kho lưu cùng layout; cần có khi hiển thị nhiều khu trên một canvas. */
+  zone?: string;
 };
 
 export type ProductOption = {

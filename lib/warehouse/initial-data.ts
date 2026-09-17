@@ -2,6 +2,7 @@ import { listProductLayoutsByBranch } from "@/lib/product-layout/repository";
 import { getProductCatalogService } from "@/lib/warehouse/catalog-service";
 import { mergeCatalogAndLayouts, type WarehouseInitialData } from "@/lib/product-catalog/merge";
 import { findNearestValidFloorPlanPosition, getWarehouseFloorPlan, isPositionInsideFloorPlan } from "@/lib/warehouse/floor-plans";
+import { WAREHOUSES } from "@/lib/warehouse/branches";
 
 export type WarehouseDataResult =
   | { ok: true; data: WarehouseInitialData }
@@ -21,16 +22,28 @@ export async function loadWarehouseInitialData(branchId: number, zone: string): 
     if (layoutResult.status === "rejected") throw Object.assign(layoutResult.reason, { source: "DATABASE" });
     const products = catalogResult.value;
     const branchLayouts = layoutResult.value;
-    const floorPlan = getWarehouseFloorPlan(branchId, zone);
-    const currentZoneLayouts = branchLayouts
-      .filter((layout) => layout.zone === zone)
+    const visibleZones = branchId === WAREHOUSES.caoLanh.id ? new Set(["cold", "dry"]) : new Set([zone]);
+    const visibleLayouts = branchLayouts
+      .filter((layout) => visibleZones.has(layout.zone))
       .map((layout) => {
+        const floorPlan = getWarehouseFloorPlan(branchId, layout.zone);
         if (!floorPlan || isPositionInsideFloorPlan(floorPlan, layout)) return layout;
         const safePosition = findNearestValidFloorPlanPosition(floorPlan, layout);
         return { ...layout, x: safePosition.x, y: safePosition.y };
       });
     const unavailableProductIds = new Set(branchLayouts.map((layout) => layout.productId));
-    return { ok: true, data: mergeCatalogAndLayouts(products, currentZoneLayouts, unavailableProductIds) };
+    const data = mergeCatalogAndLayouts(products, visibleLayouts, unavailableProductIds);
+    const zoneByProductId = new Map(visibleLayouts.map((layout) => [layout.productId, layout.zone]));
+    return {
+      ok: true,
+      data: {
+        ...data,
+        canvasProducts: data.canvasProducts.map((product) => ({
+          ...product,
+          zone: zoneByProductId.get(product.productId) ?? zone,
+        })),
+      },
+    };
   } catch (error) {
     const source = error && typeof error === "object" && "source" in error ? error.source : "UNKNOWN";
     console.error("Failed to load warehouse data", {

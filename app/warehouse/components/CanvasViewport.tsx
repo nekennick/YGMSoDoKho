@@ -1,747 +1,244 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { DndContext, PointerSensor, type DragEndEvent, type DragMoveEvent, type DragStartEvent, useDraggable, useSensor, useSensors } from "@dnd-kit/core";
-import { useDroppable } from "@dnd-kit/core";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { DndContext, PointerSensor, type DragEndEvent, type DragStartEvent, useDraggable, useSensor, useSensors } from "@dnd-kit/core";
 import { TransformComponent, TransformWrapper, type ReactZoomPanPinchRef } from "react-zoom-pan-pinch";
 import type { CanvasProduct } from "@/lib/product-catalog/merge";
 import { useKeyboard } from "@/app/warehouse/hooks/useKeyboard";
-import { restoreProductLayoutsAction, updateProductColorsAction, updateProductPositionAction, updateProductPositionsAction, setProductLayoutsGroupAction } from "@/app/warehouse/actions/product-layout";
-import { deleteProductLayoutAction } from "@/app/warehouse/actions/product-layout";
+import { deleteProductLayoutAction, restoreProductLayoutsAction, setProductLayoutsGroupAction, updateProductColorsAction, updateProductPositionsAction } from "@/app/warehouse/actions/product-layout";
 import { WarehouseFloorPlan } from "@/app/warehouse/components/WarehouseFloorPlan";
-import {
-  findNearestValidFloorPlanPosition,
-  getFloorPlanCanvasRect,
-  getFloorPlanUsableRect,
-  getWarehouseFloorPlan,
-  isPositionInsideFloorPlan,
-  PRODUCT_CHIP_HEIGHT,
-  PRODUCT_CHIP_WIDTH,
-} from "@/lib/warehouse/floor-plans";
+import { getFloorPlanCanvasRect, getWarehouseFloorPlan, isPositionInsideFloorPlan, PRODUCT_CHIP_HEIGHT, PRODUCT_CHIP_WIDTH } from "@/lib/warehouse/floor-plans";
 import { useWarehouseSettings } from "@/app/warehouse/components/WarehouseSettings";
 
-const CHIP_COLORS = [
-  { name: "Xanh dương", value: "#2563eb" },
-  { name: "Xanh lá", value: "#059669" },
-  { name: "Cam", value: "#d97706" },
-  { name: "Đỏ", value: "#dc2626" },
-  { name: "Tím", value: "#7c3aed" },
-  { name: "Hồng", value: "#db2777" },
-  { name: "Xám", value: "#475569" },
-  { name: "Nâu", value: "#92400e" },
-];
+const NAME_VISIBLE_SCALE = 0.3;
+const DETAILS_VISIBLE_SCALE = 0.7;
+const CANVAS_SIZE = 12000;
+const PLAN_GAP = 520;
+const CHIP_COLORS = ["#2563eb", "#059669", "#d97706", "#dc2626", "#7c3aed", "#db2777", "#475569", "#92400e"];
 
-function TrashDropZone() {
-  const { isOver, setNodeRef } = useDroppable({ id: "trash-zone" });
-  return <div ref={setNodeRef} className={`touch-trash-zone fixed bottom-5 left-1/2 z-30 -translate-x-1/2 rounded-full px-6 py-3 text-sm font-semibold shadow-lg transition ${isOver ? "bg-red-600 text-white scale-110" : "bg-slate-900/90 text-white"}`}>🗑️ {isOver ? "Thả để xóa" : "Kéo vào đây để xóa"}</div>;
+type ZonedProduct = CanvasProduct & { zone: string };
+type Point = { x: number; y: number };
+
+function zoneOffsets(branchId: number, zones: readonly string[]) {
+  if (zones.includes("cold") && zones.includes("dry")) {
+    // Kho Đông đang dùng toạ độ gốc (240, 240); đưa nó vào đúng vùng 16 × 26 m
+    // ở góc trên trái của Kho Khô mà không sửa bất kỳ toạ độ nào trong cơ sở dữ liệu.
+    return new Map<string, Point>([["dry", { x: 0, y: 0 }], ["cold", { x: -240, y: -240 }]]);
+  }
+  let nextX = 300;
+  const offsets = new Map<string, Point>();
+  for (const zone of zones) {
+    const plan = getWarehouseFloorPlan(branchId, zone);
+    if (!plan) { offsets.set(zone, { x: 0, y: 0 }); continue; }
+    const rect = getFloorPlanCanvasRect(plan);
+    offsets.set(zone, { x: nextX - rect.x, y: 420 - rect.y });
+    nextX += rect.width + PLAN_GAP;
+  }
+  return offsets;
 }
 
-function DraggableProduct({ product, scale, selected, groupDelta, dragDisabled, multiTouchGesture, showInventory, mobileMultiSelectEnabled, onSelect, onContextMenu, onMultiSelectStart, onLongPress }: { product: CanvasProduct; scale: number; selected: boolean; groupDelta: { x: number; y: number } | null; dragDisabled: boolean; multiTouchGesture: boolean; showInventory: boolean; mobileMultiSelectEnabled: boolean; onSelect: (shift: boolean) => void; onContextMenu: (event: React.MouseEvent) => void; onMultiSelectStart: () => void; onLongPress: (x: number, y: number) => void }) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: product.productId, disabled: dragDisabled });
-  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const multiSelectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pointerStart = useRef<{ x: number; y: number } | null>(null);
-  const longPressTriggered = useRef(false);
-  const deltaX = isDragging && !multiTouchGesture ? (transform?.x ?? 0) / scale : (groupDelta?.x ?? 0);
-  const deltaY = isDragging && !multiTouchGesture ? (transform?.y ?? 0) / scale : (groupDelta?.y ?? 0);
-  const clearLongPress = () => {
-    if (longPressTimer.current) clearTimeout(longPressTimer.current);
-    if (multiSelectTimer.current) clearTimeout(multiSelectTimer.current);
-    longPressTimer.current = null;
-    multiSelectTimer.current = null;
-  };
-  useEffect(() => {
-    if (isDragging || multiTouchGesture) clearLongPress();
-    return clearLongPress;
-  }, [isDragging, multiTouchGesture]);
+const ProductChip = memo(function ProductChip({ product, world, scale, selected, disabled, overview, showDetails, dimmed, showInventory, onSelect, onContextMenu }: { product: ZonedProduct; world: Point; scale: number; selected: boolean; disabled: boolean; overview: boolean; showDetails: boolean; dimmed: boolean; showInventory: boolean; onSelect: (productId: number, shift: boolean) => void; onContextMenu: (productId: number, event: React.MouseEvent) => void }) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: product.productId, disabled });
+  const dx = (transform?.x ?? 0) / scale;
+  const dy = (transform?.y ?? 0) / scale;
+  if (overview) {
+    return <div title={product.name} data-product-id={product.productId} className={`product-chip absolute h-10 w-[250px] rounded-md border border-white/70 shadow-sm ${selected ? "ring-4 ring-yellow-300" : ""} ${dimmed ? "opacity-20" : "opacity-95"}`} style={{ left: world.x, top: world.y, backgroundColor: product.color }} />;
+  }
   return (
-    <div
-      ref={setNodeRef}
-      {...listeners}
-      {...attributes}
-      onPointerDown={(event) => {
-        if (event.pointerType === "touch" && event.currentTarget.closest<HTMLElement>("[data-multi-touch='true']")) {
-          clearLongPress();
-          pointerStart.current = null;
-          return;
-        }
-        listeners?.onPointerDown?.(event);
-        if (event.pointerType === "mouse") return;
-        pointerStart.current = { x: event.clientX, y: event.clientY };
-        longPressTriggered.current = false;
-        clearLongPress();
-        if (mobileMultiSelectEnabled) {
-          multiSelectTimer.current = setTimeout(() => {
-            longPressTriggered.current = true;
-            onMultiSelectStart();
-          }, 300);
-        }
-        longPressTimer.current = setTimeout(() => {
-          longPressTriggered.current = true;
-          onLongPress(event.clientX, event.clientY);
-        }, 1000);
-      }}
-      onPointerMove={(event) => {
-        if (!pointerStart.current) return;
-        if (Math.hypot(event.clientX - pointerStart.current.x, event.clientY - pointerStart.current.y) > 8) clearLongPress();
-      }}
-      onPointerUp={() => { pointerStart.current = null; clearLongPress(); }}
-      onPointerCancel={() => { pointerStart.current = null; clearLongPress(); }}
-      onClick={(event) => {
-        clearLongPress();
-        pointerStart.current = null;
-        if (longPressTriggered.current) {
-          longPressTriggered.current = false;
-          return;
-        }
-        onSelect(event.shiftKey);
-      }}
-      onContextMenu={onContextMenu}
-      data-product-id={product.productId}
-      className={`product-chip absolute flex h-10 w-[250px] min-w-[250px] max-w-[250px] touch-none items-center overflow-hidden rounded-lg border px-3 text-3xl font-medium text-white shadow-sm transition-[filter,box-shadow] ${selected ? "border-yellow-300 brightness-125 saturate-150 ring-4 ring-yellow-300/80 ring-offset-2 ring-offset-slate-50" : product.groupId ? "border-violet-200 ring-2 ring-violet-300/80 ring-offset-1 ring-offset-slate-50" : "border-slate-200"}`}
-      style={{
-        left: product.x,
-        top: product.y,
-        backgroundColor: product.color,
-        transform: `translate3d(${deltaX}px, ${deltaY}px, 0)`,
-        zIndex: isDragging && !multiTouchGesture ? 20 : 1,
-        opacity: isDragging && !multiTouchGesture ? 0.8 : 1,
-      }}
-    >
-      <span className="min-w-0 flex-1 truncate" title={product.name}>{product.name}</span>
-      {showInventory && <span className="ml-2 shrink-0 text-sm font-normal text-white/80">({product.quantity})</span>}
-      {product.groupId && <span aria-label="Đã group" className="ml-1.5 shrink-0 text-xs" title="Đã group">⛓</span>}
+    <div ref={setNodeRef} {...listeners} {...attributes} data-product-id={product.productId} title={product.name} onClick={(event) => onSelect(product.productId, event.shiftKey)} onContextMenu={(event) => onContextMenu(product.productId, event)}
+      className={`product-chip absolute flex h-10 w-[250px] touch-none items-center overflow-hidden rounded-lg border px-3 text-3xl font-medium text-white shadow-sm ${selected ? "border-yellow-300 ring-4 ring-yellow-300/80 ring-offset-2" : product.groupId ? "border-violet-100 ring-2 ring-violet-300/80" : "border-white/60"} ${dimmed ? "opacity-25" : ""}`}
+      style={{ left: world.x, top: world.y, backgroundColor: product.color, transform: `translate3d(${dx}px, ${dy}px, 0)`, zIndex: isDragging ? 20 : 1 }}>
+      <span className="min-w-0 flex-1 truncate">{product.name}</span>
+      {showDetails && showInventory && <span className="ml-2 shrink-0 text-sm font-normal text-white/80">({product.quantity})</span>}
+      {showDetails && product.groupId && <span className="ml-1.5 shrink-0 text-xs" title="Đã group">⛓</span>}
     </div>
   );
-}
+});
 
-export function CanvasViewport({ products, branchId, zone, onProductsChange, onProductsDeleted, onProductsRestored, onRequestAdd, onRegisterCenterPosition, focusProductId }: { products: CanvasProduct[]; branchId: number; zone: string; onProductsChange: (products: CanvasProduct[]) => void; onProductsDeleted?: (products: CanvasProduct[]) => void; onProductsRestored?: (products: CanvasProduct[]) => void; onRequestAdd: () => void; onRegisterCenterPosition?: (getter: (() => { x: number; y: number }) | null) => void; focusProductId?: number | null }) {
+export function CanvasViewport({ products, branchId, zone, onProductsChange, onProductsDeleted, onProductsRestored, onRequestAdd, onRegisterCenterPosition, focusProductId }: { products: CanvasProduct[]; branchId: number; zone: string; onProductsChange: (products: CanvasProduct[]) => void; onProductsDeleted?: (products: CanvasProduct[]) => void; onProductsRestored?: (products: CanvasProduct[]) => void; onRequestAdd: () => void; onRegisterCenterPosition?: (getter: (() => Point) | null) => void; focusProductId?: number | null }) {
   const { spacePressed } = useKeyboard();
   const { settings } = useWarehouseSettings();
-  const floorPlan = getWarehouseFloorPlan(branchId, zone);
+  const allProducts = products as ZonedProduct[];
+  const zones = useMemo(() => [...new Set(allProducts.map((item) => item.zone ?? zone))].sort((a, b) => a === "cold" ? -1 : b === "cold" ? 1 : a.localeCompare(b)), [allProducts, zone]);
+  const offsets = useMemo(() => zoneOffsets(branchId, zones), [branchId, zones]);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
-  const [dragging, setDragging] = useState(false);
-  const [trashVisible, setTrashVisible] = useState(false);
-  const [activeProductId, setActiveProductId] = useState<number | null>(null);
+  const [scale, setScale] = useState(0.3);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
-  const [dragPreview, setDragPreview] = useState<{ ids: number[]; x: number; y: number } | null>(null);
-  const [isTouchDevice, setIsTouchDevice] = useState(false);
-  const [contextMenu, setContextMenu] = useState<{ productId: number; x: number; y: number; selectedIds: number[] } | null>(null);
-  const [gridMenuOpen, setGridMenuOpen] = useState(false);
-  const [colorMenuOpen, setColorMenuOpen] = useState(false);
-  const [mobileMultiSelect, setMobileMultiSelect] = useState(false);
-  const [multiTouchGesture, setMultiTouchGesture] = useState(false);
-  const [floorPlanNotice, setFloorPlanNotice] = useState<string | null>(null);
-  const [selectionBox, setSelectionBox] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
-  const selectionStart = useRef<{ x: number; y: number } | null>(null);
-  const selectionMoved = useRef(false);
-  const canvasRef = useRef<HTMLDivElement | null>(null);
-  const transformRef = useRef<ReactZoomPanPinchRef | null>(null);
-  const productsRef = useRef(products);
-  const undoHistory = useRef<CanvasProduct[][]>([]);
-  const pendingMutations = useRef(new Set<Promise<unknown>>());
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; productId: number } | null>(null);
+  const [query, setQuery] = useState("");
+  const [notice, setNotice] = useState<string | null>(null);
   const [undoCount, setUndoCount] = useState(0);
-  productsRef.current = products;
+  const [selectionBox, setSelectionBox] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
+  const canvasRef = useRef<HTMLDivElement | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const transformRef = useRef<ReactZoomPanPinchRef | null>(null);
+  const undoHistory = useRef<ZonedProduct[][]>([]);
+  const pendingMutations = useRef(new Set<Promise<unknown>>());
+  const selectionStart = useRef<Point | null>(null);
+  const selectionDragged = useRef(false);
+  const selectionJustEnded = useRef(false);
+  const middlePanStart = useRef<{ x: number; y: number; positionX: number; positionY: number } | null>(null);
+  const overview = scale < NAME_VISIBLE_SCALE;
+  const showDetails = scale >= DETAILS_VISIBLE_SCALE;
+  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const normalizedQuery = query.trim().toLocaleLowerCase("vi");
+  const matches = useMemo(() => normalizedQuery ? new Set(allProducts.filter((item) => item.name.toLocaleLowerCase("vi").includes(normalizedQuery)).map((item) => item.productId)) : null, [allProducts, normalizedQuery]);
 
-  const saveUndoState = useCallback((previousProducts: CanvasProduct[]) => {
-    const snapshot = previousProducts.map((product) => ({ ...product }));
-    undoHistory.current = [...undoHistory.current, snapshot].slice(-10);
-    setUndoCount(undoHistory.current.length);
-    return snapshot;
-  }, []);
-
-  const discardUndoState = useCallback((snapshot: CanvasProduct[]) => {
-    const nextHistory = undoHistory.current.filter((entry) => entry !== snapshot);
-    const removed = nextHistory.length !== undoHistory.current.length;
-    undoHistory.current = nextHistory;
-    setUndoCount(nextHistory.length);
-    return removed;
-  }, []);
-
-  const trackMutation = useCallback(<T,>(mutation: Promise<T>) => {
-    pendingMutations.current.add(mutation);
-    void mutation.then(
-      () => pendingMutations.current.delete(mutation),
-      () => pendingMutations.current.delete(mutation),
-    );
-    return mutation;
-  }, []);
-
-  const undoLastAction = useCallback(() => {
-    const previousProducts = undoHistory.current.at(-1);
-    if (!previousProducts) return;
-    undoHistory.current = undoHistory.current.slice(0, -1);
-    setUndoCount(undoHistory.current.length);
-    onProductsChange(previousProducts);
-    onProductsRestored?.(previousProducts);
-    setSelectedIds((ids) => ids.filter((id) => previousProducts.some((product) => product.productId === id)));
-    setContextMenu(null);
-    setGridMenuOpen(false);
-
-    const pendingBeforeUndo = [...pendingMutations.current];
-    const persistence = Promise.allSettled(pendingBeforeUndo).then(() => (
-      restoreProductLayoutsAction({
-        branchId,
-        zone,
-        products: previousProducts.map(({ productId, x, y, color, groupId }) => ({ productId, x, y, color, groupId })),
-      })
-    ));
-    void trackMutation(persistence).then(
-      (result) => { if (!result.ok) setFloorPlanNotice(result.message); },
-      () => setFloorPlanNotice("Không thể lưu thao tác hoàn tác."),
-    );
-  }, [branchId, onProductsChange, onProductsRestored, trackMutation, zone]);
-
-  useEffect(() => {
-    undoHistory.current = [];
-    pendingMutations.current.clear();
-    setUndoCount(0);
-  }, [branchId, zone]);
-
-  const normalizePosition = useCallback((position: { x: number; y: number }) => (
-    floorPlan ? findNearestValidFloorPlanPosition(floorPlan, position) : position
-  ), [floorPlan]);
-
-  const canPlaceProducts = useCallback((nextProducts: CanvasProduct[], productIds: number[]) => (
-    !floorPlan || nextProducts
-      .filter((product) => productIds.includes(product.productId))
-      .every((product) => isPositionInsideFloorPlan(floorPlan, product))
-  ), [floorPlan]);
-
-  const getDragProductIds = useCallback((productId: number) => {
-    const activeProduct = products.find((product) => product.productId === productId);
-    if (activeProduct?.groupId) {
-      return products
-        .filter((product) => product.groupId === activeProduct.groupId)
-        .map((product) => product.productId);
-    }
-    return selectedIds.includes(productId) ? selectedIds : [productId];
-  }, [products, selectedIds]);
-
-  const showInvalidPositionNotice = useCallback(() => {
-    setFloorPlanNotice("Vị trí này nằm trong khu vực không được đặt chip.");
-  }, []);
-
-  useEffect(() => {
-    if (!floorPlanNotice) return;
-    const timer = window.setTimeout(() => setFloorPlanNotice(null), 2600);
-    return () => window.clearTimeout(timer);
-  }, [floorPlanNotice]);
-
-  useEffect(() => {
-    if (!onRegisterCenterPosition) return;
-    onRegisterCenterPosition(() => {
-      const viewport = canvasRef.current?.getBoundingClientRect();
-      const transform = transformRef.current?.instance.transformState;
-      if (!viewport || !transform || !transform.scale) {
-        if (floorPlan) {
-          const planRect = getFloorPlanUsableRect(floorPlan);
-          return normalizePosition({
-            x: planRect.x + planRect.width / 2 - PRODUCT_CHIP_WIDTH / 2,
-            y: planRect.y + planRect.height / 2 - PRODUCT_CHIP_HEIGHT / 2,
-          });
-        }
-        return { x: 400, y: 250 };
-      }
-      const anchorProduct = productsRef.current[0];
-      const anchorNode = anchorProduct && canvasRef.current?.querySelector<HTMLElement>(`.product-chip[data-product-id="${anchorProduct.productId}"]`);
-      if (anchorProduct && anchorNode) {
-        const anchorRect = anchorNode.getBoundingClientRect();
-        const anchorWidth = anchorNode.offsetWidth || PRODUCT_CHIP_WIDTH;
-        const anchorHeight = anchorNode.offsetHeight || 40;
-        const scaleX = anchorRect.width / anchorWidth;
-        const scaleY = anchorRect.height / anchorHeight;
-        const targetScreenX = floorPlan ? viewport.left + viewport.width / 2 : window.innerWidth / 2;
-        const targetScreenY = floorPlan ? viewport.top + viewport.height / 2 : window.innerHeight / 2;
-        const worldOriginX = anchorRect.left - anchorProduct.x * scaleX;
-        const worldOriginY = anchorRect.top - anchorProduct.y * scaleY;
-        return normalizePosition({
-          x: (targetScreenX - worldOriginX) / scaleX - anchorWidth / 2,
-          y: (targetScreenY - worldOriginY) / scaleY - anchorHeight / 2,
-        });
-      }
-      return normalizePosition({
-        x: (viewport.left + viewport.width / 2 - viewport.left - transform.positionX) / transform.scale - PRODUCT_CHIP_WIDTH / 2,
-        y: (viewport.top + viewport.height / 2 - viewport.top - transform.positionY) / transform.scale - PRODUCT_CHIP_HEIGHT / 2,
-      });
+  const worldPosition = useCallback((item: ZonedProduct): Point => {
+    const offset = offsets.get(item.zone) ?? { x: 0, y: 0 };
+    return { x: item.x + offset.x, y: item.y + offset.y };
+  }, [offsets]);
+  const worldPositions = useMemo(() => new Map(allProducts.map((item) => [item.productId, worldPosition(item)])), [allProducts, worldPosition]);
+  const sameZoneSelection = useCallback((productId: number, shift: boolean) => {
+    const product = allProducts.find((item) => item.productId === productId);
+    if (!product) return;
+    setSelectedIds((current) => {
+      const compatible = current.filter((id) => allProducts.find((item) => item.productId === id)?.zone === product.zone);
+      if (!shift) return [productId];
+      return compatible.includes(productId) ? compatible.filter((id) => id !== productId) : [...compatible, productId];
     });
-    return () => onRegisterCenterPosition(null);
-  }, [floorPlan, normalizePosition, onRegisterCenterPosition]);
-
-  const fitFloorPlan = useCallback((duration = 250) => {
-    if (!floorPlan || !canvasRef.current || !transformRef.current) return;
-    const viewport = canvasRef.current.getBoundingClientRect();
-    const planRect = getFloorPlanCanvasRect(floorPlan);
-    const padding = Math.min(48, viewport.width * 0.08, viewport.height * 0.08);
-    const scale = Math.min(1, Math.max(0.2, Math.min(
-      (viewport.width - padding * 2) / planRect.width,
-      (viewport.height - padding * 2) / planRect.height,
-    )));
-    const positionX = viewport.width / 2 - (planRect.x + planRect.width / 2) * scale;
-    const positionY = viewport.height / 2 - (planRect.y + planRect.height / 2) * scale;
-    transformRef.current.setTransform(positionX, positionY, scale, duration);
-  }, [floorPlan]);
-
-  useEffect(() => {
-    if (!floorPlan) return;
-    const frame = window.requestAnimationFrame(() => fitFloorPlan(0));
-    return () => window.cancelAnimationFrame(frame);
-  }, [fitFloorPlan, floorPlan]);
-  const activeTouchPointers = useRef(new Set<number>());
-  const multiTouchGestureRef = useRef(false);
-  const trashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const clearTrashTimer = () => {
-    if (trashTimer.current) clearTimeout(trashTimer.current);
-    trashTimer.current = null;
-  };
-
-  useEffect(() => {
-    if (focusProductId === null || focusProductId === undefined) return;
-    const frame = window.requestAnimationFrame(() => {
-      if (!canvasRef.current || !transformRef.current) return;
-      const node = canvasRef.current.querySelector<HTMLElement>(`.product-chip[data-product-id="${focusProductId}"]`);
-      if (!node) return;
-      const chip = node.getBoundingClientRect();
-      const transform = transformRef.current.instance.transformState;
-      const deltaX = window.innerWidth / 2 - (chip.left + chip.width / 2);
-      const deltaY = window.innerHeight / 2 - (chip.top + chip.height / 2);
-      transformRef.current.setTransform(transform.positionX + deltaX, transform.positionY + deltaY, transform.scale, 300);
+  }, [allProducts]);
+  const openContextMenu = useCallback((productId: number, event: React.MouseEvent) => {
+    event.preventDefault();
+    if (!selectedSet.has(productId)) sameZoneSelection(productId, false);
+    setContextMenu({ x: event.clientX, y: event.clientY, productId });
+  }, [sameZoneSelection, selectedSet]);
+  const trackMutation = useCallback(<T,>(promise: Promise<T>) => { pendingMutations.current.add(promise); void promise.finally(() => pendingMutations.current.delete(promise)); return promise; }, []);
+  const saveUndo = useCallback((snapshot: ZonedProduct[]) => { undoHistory.current = [...undoHistory.current, snapshot.map((item) => ({ ...item }))].slice(-10); setUndoCount(undoHistory.current.length); }, []);
+  const restoreSnapshot = useCallback((snapshot: ZonedProduct[]) => {
+    const byZone = new Map<string, ZonedProduct[]>();
+    snapshot.forEach((item) => byZone.set(item.zone, [...(byZone.get(item.zone) ?? []), item]));
+    return Promise.all([...byZone].map(([targetZone, items]) => restoreProductLayoutsAction({ branchId, zone: targetZone, products: items.map(({ productId, x, y, color, groupId }) => ({ productId, x, y, color, groupId })) }))).then((result) => result.every((item) => item.ok));
+  }, [branchId]);
+  const undo = useCallback(() => {
+    const snapshot = undoHistory.current.at(-1);
+    if (!snapshot) return;
+    undoHistory.current = undoHistory.current.slice(0, -1); setUndoCount(undoHistory.current.length);
+    onProductsChange(snapshot); onProductsRestored?.(snapshot); setSelectedIds([]); setContextMenu(null);
+    void trackMutation(Promise.allSettled([...pendingMutations.current]).then(() => restoreSnapshot(snapshot))).then((ok) => { if (!ok) setNotice("Không thể lưu thao tác hoàn tác."); });
+  }, [onProductsChange, onProductsRestored, restoreSnapshot, trackMutation]);
+  const selectedProducts = useMemo(() => allProducts.filter((item) => selectedSet.has(item.productId)), [allProducts, selectedSet]);
+  const selectedZone = selectedProducts[0]?.zone;
+  const canPlace = useCallback((next: ZonedProduct[], ids: readonly number[]) => next.filter((item) => ids.includes(item.productId)).every((item) => { const plan = getWarehouseFloorPlan(branchId, item.zone); return !plan || isPositionInsideFloorPlan(plan, item); }), [branchId]);
+  const persistPositions = useCallback((next: ZonedProduct[], ids: number[]) => Promise.all(zones.map((targetZone) => {
+    const positions = next.filter((item) => item.zone === targetZone && ids.includes(item.productId)).map(({ productId, x, y }) => ({ productId, x, y }));
+    return positions.length ? updateProductPositionsAction({ branchId, zone: targetZone, positions }) : Promise.resolve({ ok: true });
+  })).then((results) => results.every((item) => item.ok)), [branchId, zones]);
+  const updatePositions = useCallback((next: ZonedProduct[], ids: number[]) => {
+    if (!canPlace(next, ids)) { setNotice("Vị trí này nằm trong khu vực không được đặt chip."); return; }
+    saveUndo(allProducts); onProductsChange(next);
+    void trackMutation(persistPositions(next, ids)).then((ok) => { if (!ok) { onProductsChange(allProducts); setNotice("Không thể lưu vị trí chip."); } });
+  }, [allProducts, canPlace, onProductsChange, persistPositions, saveUndo, trackMutation]);
+  const arrange = useCallback((kind: "vertical" | "horizontal" | "grid") => {
+    if (selectedProducts.length < 2 || !selectedZone) return;
+    const ordered = [...selectedProducts].sort((a, b) => a.y - b.y || a.x - b.x);
+    const first = ordered[0]; const columns = Math.ceil(Math.sqrt(ordered.length));
+    const indexById = new Map(ordered.map((item, index) => [item.productId, index]));
+    const next = allProducts.map((item) => {
+      const index = indexById.get(item.productId); if (index === undefined) return item;
+      const x = kind === "vertical" ? first.x : first.x + (kind === "horizontal" ? index : index % columns) * (PRODUCT_CHIP_WIDTH + 5);
+      const y = kind === "horizontal" ? first.y : first.y + (kind === "vertical" ? index : Math.floor(index / columns)) * (PRODUCT_CHIP_HEIGHT + 5);
+      return { ...item, x, y };
     });
-    return () => window.cancelAnimationFrame(frame);
-  }, [focusProductId]);
+    updatePositions(next, selectedProducts.map((item) => item.productId)); setContextMenu(null);
+  }, [allProducts, selectedProducts, selectedZone, updatePositions]);
+  const changeColor = useCallback((color: string) => {
+    if (!selectedProducts.length || !selectedZone) return;
+    const ids = selectedProducts.map((item) => item.productId); const before = allProducts;
+    const next = allProducts.map((item) => ids.includes(item.productId) ? { ...item, color } : item);
+    saveUndo(before); onProductsChange(next); setContextMenu(null);
+    void trackMutation(updateProductColorsAction({ branchId, zone: selectedZone, productIds: ids, color })).then((result) => { if (!result.ok) { onProductsChange(before); setNotice(result.message); } });
+  }, [allProducts, branchId, onProductsChange, saveUndo, selectedProducts, selectedZone, trackMutation]);
+  const group = useCallback((groupId: string | null) => {
+    if (!selectedProducts.length || !selectedZone) return;
+    const ids = selectedProducts.map((item) => item.productId); const before = allProducts;
+    const next = allProducts.map((item) => ids.includes(item.productId) ? { ...item, groupId } : item);
+    saveUndo(before); onProductsChange(next); setContextMenu(null);
+    void trackMutation(setProductLayoutsGroupAction({ branchId, zone: selectedZone, productIds: ids, groupId })).then((result) => { if (!result.ok) { onProductsChange(before); setNotice(result.message); } });
+  }, [allProducts, branchId, onProductsChange, saveUndo, selectedProducts, selectedZone, trackMutation]);
+  const removeSelected = useCallback(() => {
+    if (!selectedProducts.length) return;
+    const before = allProducts; const ids = selectedProducts.map((item) => item.productId);
+    saveUndo(before); onProductsChange(allProducts.filter((item) => !ids.includes(item.productId))); onProductsDeleted?.(selectedProducts); setSelectedIds([]); setContextMenu(null);
+    void trackMutation(Promise.all(selectedProducts.map((item) => deleteProductLayoutAction({ productId: item.productId, branchId, zone: item.zone }))).then((items) => items.every((item) => item.ok))).then((ok) => { if (!ok) { onProductsChange(before); setNotice("Không thể xóa chip."); } });
+  }, [allProducts, branchId, onProductsChange, onProductsDeleted, saveUndo, selectedProducts, trackMutation]);
 
-  useEffect(() => {
-    const media = window.matchMedia("(pointer: coarse)");
-    const update = () => setIsTouchDevice(media.matches);
-    update();
-    media.addEventListener("change", update);
-    return () => media.removeEventListener("change", update);
-  }, []);
+  const fitAll = useCallback((duration = 250) => {
+    const viewport = canvasRef.current?.getBoundingClientRect(); if (!viewport || !transformRef.current) return;
+    const rects = zones.flatMap((targetZone) => {
+      const plan = getWarehouseFloorPlan(branchId, targetZone);
+      if (!plan) return [];
+      const rect = getFloorPlanCanvasRect(plan);
+      const offset = offsets.get(targetZone) ?? { x: 0, y: 0 };
+      return [{ x: rect.x + offset.x, y: rect.y + offset.y, width: rect.width, height: rect.height }];
+    });
+    if (!rects.length) return;
+    const left = Math.min(...rects.map((item) => item.x)); const top = Math.min(...rects.map((item) => item.y)); const right = Math.max(...rects.map((item) => item.x + item.width)); const bottom = Math.max(...rects.map((item) => item.y + item.height));
+    const factor = Math.max(0.2, Math.min(0.65, Math.min((viewport.width - 96) / (right - left), (viewport.height - 96) / (bottom - top))));
+    transformRef.current.setTransform(viewport.width / 2 - (left + right) / 2 * factor, viewport.height / 2 - (top + bottom) / 2 * factor, factor, duration);
+  }, [branchId, offsets, zones]);
+  useEffect(() => { const frame = requestAnimationFrame(() => fitAll(0)); return () => cancelAnimationFrame(frame); }, [fitAll]);
+  useEffect(() => { undoHistory.current = []; setUndoCount(0); }, [branchId, zone]);
+  useEffect(() => { if (!notice) return; const timer = window.setTimeout(() => setNotice(null), 2600); return () => window.clearTimeout(timer); }, [notice]);
+  useEffect(() => { if (!onRegisterCenterPosition) return; onRegisterCenterPosition(() => ({ x: 400, y: 250 })); return () => onRegisterCenterPosition(null); }, [onRegisterCenterPosition]);
+  useEffect(() => { if (focusProductId == null) return; const item = allProducts.find((product) => product.productId === focusProductId); if (!item || !transformRef.current || !canvasRef.current) return; const world = worldPosition(item); const rect = canvasRef.current.getBoundingClientRect(); const current = transformRef.current.instance.transformState; transformRef.current.setTransform(rect.width / 2 - (world.x + PRODUCT_CHIP_WIDTH / 2) * current.scale, rect.height / 2 - (world.y + PRODUCT_CHIP_HEIGHT / 2) * current.scale, Math.max(current.scale, NAME_VISIBLE_SCALE), 250); }, [allProducts, focusProductId, worldPosition]);
+  useEffect(() => { const listener = (event: KeyboardEvent) => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") { event.preventDefault(); undo(); return; } if ((event.key === "Delete" || event.key === "Backspace") && selectedIds.length) { event.preventDefault(); removeSelected(); } }; window.addEventListener("keydown", listener); return () => window.removeEventListener("keydown", listener); }, [removeSelected, selectedIds.length, undo]);
+  const visibleProducts = useMemo(() => allProducts, [allProducts]);
 
-  useEffect(() => {
-    if (!settings.mobileMultiSelect) setMobileMultiSelect(false);
-  }, [settings.mobileMultiSelect]);
-
-  const distributeSelectedVertically = () => {
-    if (selectedIds.length < 2) return;
-    const selectedProducts = products
-      .filter((product) => selectedIds.includes(product.productId))
-      .sort((a, b) => a.y - b.y || a.x - b.x);
-    const first = selectedProducts[0];
-    if (!first) return;
-    const chipHeight = canvasRef.current?.querySelector<HTMLElement>(".product-chip")?.offsetHeight ?? 40;
-    const gap = 5;
-    const nextProducts = products.map((product) => {
-      const index = selectedProducts.findIndex((item) => item.productId === product.productId);
-      return index < 0 ? product : {
-        ...product,
-        x: first.x,
-        y: first.y + index * (chipHeight + gap),
-      };
-    });
-    if (!canPlaceProducts(nextProducts, selectedIds)) {
-      showInvalidPositionNotice();
-      setContextMenu(null);
-      return;
-    }
-    const undoState = saveUndoState(products);
-    onProductsChange(nextProducts);
-    void trackMutation(updateProductPositionsAction({ branchId, zone, positions: nextProducts.filter((product) => selectedIds.includes(product.productId)).map(({ productId, x, y }) => ({ productId, x, y })) })).then((result) => {
-      if (!result.ok && discardUndoState(undoState)) onProductsChange(products);
-    });
-    setContextMenu(null);
-  };
-
-  const arrangeSelectedInGrid = (columnCount?: number) => {
-    if (selectedIds.length < 2) return;
-    const selectedProducts = products
-      .filter((product) => selectedIds.includes(product.productId))
-      .sort((a, b) => a.y - b.y || a.x - b.x);
-    const first = selectedProducts[0];
-    if (!first) return;
-    const columns = Math.min(
-      selectedProducts.length,
-      columnCount ?? Math.ceil(Math.sqrt(selectedProducts.length)),
-    );
-    const chipHeight = canvasRef.current?.querySelector<HTMLElement>(".product-chip")?.offsetHeight ?? PRODUCT_CHIP_HEIGHT;
-    const gap = 5;
-    const nextProducts = products.map((product) => {
-      const index = selectedProducts.findIndex((item) => item.productId === product.productId);
-      if (index < 0) return product;
-      return {
-        ...product,
-        x: first.x + (index % columns) * (PRODUCT_CHIP_WIDTH + gap),
-        y: first.y + Math.floor(index / columns) * (chipHeight + gap),
-      };
-    });
-    if (!canPlaceProducts(nextProducts, selectedIds)) {
-      showInvalidPositionNotice();
-      setContextMenu(null);
-      setGridMenuOpen(false);
-      return;
-    }
-    const undoState = saveUndoState(products);
-    onProductsChange(nextProducts);
-    void trackMutation(updateProductPositionsAction({ branchId, zone, positions: nextProducts.filter((product) => selectedIds.includes(product.productId)).map(({ productId, x, y }) => ({ productId, x, y })) })).then((result) => {
-      if (!result.ok && discardUndoState(undoState)) onProductsChange(products);
-    });
-    setContextMenu(null);
-    setGridMenuOpen(false);
-  };
-
-  const distributeSelectedHorizontally = () => {
-    if (selectedIds.length < 2) return;
-    const selectedProducts = products
-      .filter((product) => selectedIds.includes(product.productId))
-      .sort((a, b) => a.x - b.x || a.y - b.y);
-    const firstX = selectedProducts[0]?.x;
-    if (firstX === undefined) return;
-    const widths = new Map<number, number>();
-    selectedProducts.forEach((product) => {
-      const node = canvasRef.current?.querySelector<HTMLElement>(`.product-chip[data-product-id="${product.productId}"]`);
-      widths.set(product.productId, node?.offsetWidth ?? PRODUCT_CHIP_WIDTH);
-    });
-    const positions = new Map<number, number>();
-    let currentX = firstX;
-    selectedProducts.forEach((product) => {
-      positions.set(product.productId, currentX);
-      currentX += (widths.get(product.productId) ?? PRODUCT_CHIP_WIDTH) + 5;
-    });
-    const nextProducts = products.map((product) => {
-      const x = positions.get(product.productId);
-      return x === undefined ? product : { ...product, x };
-    });
-    if (!canPlaceProducts(nextProducts, selectedIds)) {
-      showInvalidPositionNotice();
-      setContextMenu(null);
-      return;
-    }
-    const undoState = saveUndoState(products);
-    onProductsChange(nextProducts);
-    void trackMutation(updateProductPositionsAction({ branchId, zone, positions: nextProducts.filter((product) => selectedIds.includes(product.productId)).map(({ productId, x, y }) => ({ productId, x, y })) })).then((result) => {
-      if (!result.ok && discardUndoState(undoState)) onProductsChange(products);
-    });
-    setContextMenu(null);
-  };
-
-  const changeSelectedColor = (color: string) => {
-    const ids = contextMenu?.selectedIds ?? [];
-    if (!ids.length) return;
-    const undoState = saveUndoState(products);
-    const nextProducts = products.map((product) => ids.includes(product.productId) ? { ...product, color } : product);
-    onProductsChange(nextProducts);
-    void trackMutation(updateProductColorsAction({ branchId, zone, productIds: ids, color })).then((result) => {
-      if (!result.ok && discardUndoState(undoState)) onProductsChange(products);
-    });
-    setColorMenuOpen(false);
-    setGridMenuOpen(false);
-    setContextMenu(null);
-  };
-
-  useEffect(() => {
-    if (!contextMenu) setColorMenuOpen(false);
-  }, [contextMenu]);
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.target instanceof HTMLElement && (event.target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(event.target.tagName))) return;
-      const usesCommand = event.ctrlKey || event.metaKey;
-      if (usesCommand && event.key.toLowerCase() === "z") {
-        event.preventDefault();
-        void undoLastAction();
-        return;
-      }
-      if (usesCommand && event.key.toLowerCase() === "a") {
-        event.preventDefault();
-        setSelectedIds(products.map((product) => product.productId));
-        setActiveProductId(products[0]?.productId ?? null);
-        return;
-      }
-      if (event.key === "Escape") {
-        setSelectedIds([]);
-        setActiveProductId(null);
-        setContextMenu(null);
-        setMobileMultiSelect(false);
-        return;
-      }
-      if (usesCommand && event.key.toLowerCase() === "g" && (selectedIds.length > 1 || (event.shiftKey && selectedIds.some((id) => products.find((product) => product.productId === id)?.groupId)))) {
-        event.preventDefault();
-        const groupedIds = event.shiftKey
-          ? products.filter((product) => selectedIds.includes(product.productId) && product.groupId).map((product) => product.groupId as string)
-          : [];
-        const ids = event.shiftKey && groupedIds.length
-          ? products.filter((product) => product.groupId && groupedIds.includes(product.groupId)).map((product) => product.productId)
-          : selectedIds;
-        const groupId = event.shiftKey ? null : crypto.randomUUID();
-        void setProductLayoutsGroupAction({ branchId, zone, productIds: ids, groupId }).then((result) => {
-          if (result.ok) {
-            onProductsChange(products.map((product) => ids.includes(product.productId) ? { ...product, groupId } : product));
-            saveUndoState(products);
-          }
-        });
-        return;
-      }
-      if (event.key === "Delete" || event.key === "Backspace") {
-        const ids = selectedIds.length ? selectedIds : (activeProductId === null ? [] : [activeProductId]);
-        if (!ids.length) return;
-        event.preventDefault();
-        void Promise.all(ids.map((productId) => deleteProductLayoutAction({ productId, branchId, zone }))).then((results) => {
-          if (results.every((result) => result.ok)) {
-            const deletedProducts = products.filter((product) => ids.includes(product.productId));
-            onProductsChange(products.filter((product) => !ids.includes(product.productId)));
-            onProductsDeleted?.(deletedProducts);
-            saveUndoState(products);
-            setSelectedIds([]);
-            setActiveProductId(null);
-          }
-        });
-        return;
-      }
-      if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key) && selectedIds.length) {
-        event.preventDefault();
-        const step = event.shiftKey ? 10 : 1;
-        const dx = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
-        const dy = event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
-        const nextProducts = products.map((product) => selectedIds.includes(product.productId) ? { ...product, x: product.x + dx, y: product.y + dy } : product);
-        if (!canPlaceProducts(nextProducts, selectedIds)) {
-          showInvalidPositionNotice();
+  return <DndContext sensors={sensors} onDragStart={(event: DragStartEvent) => { if (overview || spacePressed) return; const item = allProducts.find((product) => product.productId === Number(event.active.id)); if (!item) return; const ids = item.groupId ? allProducts.filter((product) => product.zone === item.zone && product.groupId === item.groupId).map((product) => product.productId) : selectedSet.has(item.productId) ? selectedIds : [item.productId]; setSelectedIds(ids); }} onDragEnd={(event: DragEndEvent) => { if (overview || !event.delta.x && !event.delta.y) return; const id = Number(event.active.id); const active = allProducts.find((item) => item.productId === id); if (!active) return; const moving = active.groupId ? allProducts.filter((item) => item.zone === active.zone && item.groupId === active.groupId).map((item) => item.productId) : selectedSet.has(id) ? selectedIds : [id]; const currentScale = transformRef.current?.instance.transformState.scale ?? 1; const next = allProducts.map((item) => moving.includes(item.productId) ? { ...item, x: item.x + event.delta.x / currentScale, y: item.y + event.delta.y / currentScale } : item); updatePositions(next, moving); }}>
+    <TransformWrapper ref={transformRef} minScale={0.2} maxScale={4} limitToBounds={false} centerZoomedOut={false} wheel={{ activationKeys: ["Control"], step: 0.02 }} panning={{ disabled: !spacePressed, excluded: ["product-chip", "canvas-control"] }} doubleClick={{ disabled: true }} onTransformed={(_, state) => setScale((current) => Math.abs(current - state.scale) > 0.01 ? state.scale : current)}>
+      {({ resetTransform }) => <div ref={canvasRef} className="relative h-full overflow-hidden bg-slate-200" onPointerDown={(event) => {
+        const target = event.target as HTMLElement;
+        if (!target.closest(".canvas-control")) searchInputRef.current?.blur();
+        if (event.button === 1) {
+          event.preventDefault();
+          const transform = transformRef.current?.instance.transformState;
+          if (transform) middlePanStart.current = { x: event.clientX, y: event.clientY, positionX: transform.positionX, positionY: transform.positionY };
           return;
         }
-        const undoState = saveUndoState(products);
-        onProductsChange(nextProducts);
-        void trackMutation(updateProductPositionsAction({ branchId, zone, positions: nextProducts.filter((product) => selectedIds.includes(product.productId)).map(({ productId, x, y }) => ({ productId, x, y })) })).then((result) => {
-          if (!result.ok && discardUndoState(undoState)) onProductsChange(products);
-        });
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [activeProductId, branchId, canPlaceProducts, discardUndoState, onProductsChange, onProductsDeleted, products, saveUndoState, selectedIds, showInvalidPositionNotice, trackMutation, undoLastAction, zone]);
-
-  useEffect(() => {
-    const onMove = (event: PointerEvent) => {
-      if (!selectionStart.current || !canvasRef.current) return;
-      const rect = canvasRef.current.getBoundingClientRect();
-      const x = event.clientX - rect.left;
-      const y = event.clientY - rect.top;
-      if (Math.abs(x - selectionStart.current.x) > 3 || Math.abs(y - selectionStart.current.y) > 3) selectionMoved.current = true;
-      setSelectionBox({ x: Math.min(selectionStart.current.x, x), y: Math.min(selectionStart.current.y, y), width: Math.abs(x - selectionStart.current.x), height: Math.abs(y - selectionStart.current.y) });
-    };
-    const onUp = (event: PointerEvent) => {
-      if (selectionStart.current && canvasRef.current) {
-        const rect = canvasRef.current.getBoundingClientRect();
-        const endX = event.clientX - rect.left;
-        const endY = event.clientY - rect.top;
-        const left = Math.min(selectionStart.current.x, endX);
-        const top = Math.min(selectionStart.current.y, endY);
-        const right = Math.max(selectionStart.current.x, endX);
-        const bottom = Math.max(selectionStart.current.y, endY);
-        const ids = Array.from(canvasRef.current.querySelectorAll<HTMLElement>(".product-chip")).filter((node) => { const item = node.getBoundingClientRect(); const x = item.left - rect.left; const y = item.top - rect.top; return x < right && x + item.width > left && y < bottom && y + item.height > top; }).map((node) => Number(node.dataset.productId)).filter(Number.isFinite);
-        setSelectedIds(ids);
-      }
-      selectionStart.current = null; setSelectionBox(null);
-    };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-    return () => { window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp); };
-  }, []);
-
-  const contextMenuGroupId = contextMenu
-    ? products.find((product) => product.productId === contextMenu.productId)?.groupId
-      ?? products.find((product) => contextMenu.selectedIds.includes(product.productId) && product.groupId)?.groupId
-    : null;
-
-  return (
-    <DndContext id="warehouse-canvas" sensors={sensors} onDragStart={(event: DragStartEvent) => { if (mobileMultiSelect || multiTouchGestureRef.current) return; const productId = Number(event.active.id); const ids = getDragProductIds(productId); setSelectedIds(ids); setDragPreview({ ids, x: 0, y: 0 }); setDragging(true); setTrashVisible(settings.mobileTrashDropZone && !isTouchDevice); clearTrashTimer(); if (settings.mobileTrashDropZone && isTouchDevice) trashTimer.current = setTimeout(() => setTrashVisible(true), 100); }} onDragMove={(event: DragMoveEvent) => { if (multiTouchGestureRef.current) return; const scale = transformRef.current?.instance.transformState.scale ?? 1; setDragPreview((preview) => preview ? { ...preview, x: event.delta.x / scale, y: event.delta.y / scale } : null); }} onDragCancel={() => { setDragging(false); setTrashVisible(false); clearTrashTimer(); setDragPreview(null); }} onDragEnd={async (event: DragEndEvent) => {
-      setDragging(false);
-      setTrashVisible(false);
-      clearTrashTimer();
-      setDragPreview(null);
-      if (multiTouchGestureRef.current) return;
-      if (!event.active || (event.delta.x === 0 && event.delta.y === 0)) return;
-      const productId = Number(event.active.id);
-      const movingIds = getDragProductIds(productId);
-      const previous = products.find((product) => product.productId === productId);
-      if (!previous) return;
-      const scale = transformRef.current?.instance.transformState.scale ?? 1;
-      const dx = event.delta.x / scale;
-      const dy = event.delta.y / scale;
-      const nextProducts = products.map((product) => movingIds.includes(product.productId) ? { ...product, x: product.x + dx, y: product.y + dy } : product);
-      if (event.over?.id === "trash-zone") {
-        const result = await Promise.all(movingIds.map((id) => deleteProductLayoutAction({ productId: id, branchId, zone })));
-        if (result.every((item) => item.ok)) {
-          const deletedProducts = products.filter((item) => movingIds.includes(item.productId));
-          onProductsChange(products.filter((item) => !movingIds.includes(item.productId)));
-          onProductsDeleted?.(deletedProducts);
-          saveUndoState(products);
+        if (!overview && event.button === 0 && !target.closest(".product-chip") && !target.closest(".canvas-control")) { const rect = event.currentTarget.getBoundingClientRect(); selectionStart.current = { x: event.clientX - rect.left, y: event.clientY - rect.top }; selectionDragged.current = false; }
+      }} onPointerMove={(event) => {
+        const middleStart = middlePanStart.current;
+        if (middleStart && transformRef.current) {
+          event.preventDefault();
+          const transform = transformRef.current.instance.transformState;
+          transformRef.current.setTransform(middleStart.positionX + event.clientX - middleStart.x, middleStart.positionY + event.clientY - middleStart.y, transform.scale, 0);
+          return;
         }
-        return;
-      }
-      if (!canPlaceProducts(nextProducts, movingIds)) {
-        showInvalidPositionNotice();
-        return;
-      }
-      const undoState = saveUndoState(products);
-      onProductsChange(nextProducts);
-      const result = movingIds.length > 1
-        ? await trackMutation(updateProductPositionsAction({ branchId, zone, positions: nextProducts.filter((item) => movingIds.includes(item.productId)).map(({ productId: id, x, y }) => ({ productId: id, x, y })) }))
-        : await trackMutation(updateProductPositionAction({ productId, branchId, zone, x: nextProducts.find((item) => item.productId === productId)?.x ?? previous.x, y: nextProducts.find((item) => item.productId === productId)?.y ?? previous.y }));
-      if (!result.ok) {
-        if (discardUndoState(undoState)) onProductsChange(products);
-      }
-    }}>
-    <TransformWrapper
-      ref={transformRef}
-      minScale={0.2}
-      maxScale={5}
-      initialScale={floorPlan ? 0.2 : 1}
-      centerOnInit={!floorPlan}
-      centerZoomedOut={false}
-      limitToBounds={false}
-      smooth
-      wheel={{ disabled: false, activationKeys: ["Control"], step: 0.02, smoothStep: 0.0005 }}
-      panning={{ disabled: !spacePressed && !multiTouchGesture, excluded: spacePressed || multiTouchGesture ? [] : ["product-chip"] }}
-      doubleClick={{ disabled: true }}
-    >
-      {({ resetTransform, instance }) => (
-        <div
-          ref={canvasRef}
-          className={`relative h-full overflow-hidden ${floorPlan ? "bg-slate-200" : "bg-slate-50"} ${spacePressed ? "cursor-grab" : "cursor-default"}`}
-          onPointerDownCapture={(event) => {
-            if (event.pointerType !== "touch") return;
-            activeTouchPointers.current.add(event.pointerId);
-            if (activeTouchPointers.current.size >= 2) {
-              multiTouchGestureRef.current = true;
-              setMultiTouchGesture(true);
-              event.currentTarget.dataset.multiTouch = "true";
-            }
-          }}
-          onPointerUpCapture={(event) => {
-            if (event.pointerType !== "touch") return;
-            activeTouchPointers.current.delete(event.pointerId);
-            if (activeTouchPointers.current.size === 0) {
-              window.setTimeout(() => {
-                multiTouchGestureRef.current = false;
-                setMultiTouchGesture(false);
-                if (canvasRef.current) delete canvasRef.current.dataset.multiTouch;
-              }, 120);
-            }
-          }}
-          onPointerCancelCapture={(event) => {
-            if (event.pointerType !== "touch") return;
-            activeTouchPointers.current.delete(event.pointerId);
-            if (activeTouchPointers.current.size === 0) {
-              multiTouchGestureRef.current = false;
-              setMultiTouchGesture(false);
-              delete event.currentTarget.dataset.multiTouch;
-            }
-          }}
-          onPointerDown={(event) => { const target = event.target instanceof HTMLElement ? event.target : null; if (!isTouchDevice && !spacePressed && event.button === 0 && !target?.closest(".product-chip")) { const rect = event.currentTarget.getBoundingClientRect(); selectionStart.current = { x: event.clientX - rect.left, y: event.clientY - rect.top }; selectionMoved.current = false; } }}
-          onMouseDown={(event) => {
-            if (event.button !== 1) return;
-            event.preventDefault();
-            instance.setup.panning.disabled = false;
-          }}
-          onMouseUp={(event) => {
-            if (event.button === 1) instance.setup.panning.disabled = !spacePressed;
-          }}
-          onContextMenu={(event) => {
-            const target = event.target instanceof HTMLElement ? event.target : null;
-            if (!target?.closest(".product-chip")) {
-              event.preventDefault();
-              onRequestAdd();
-            }
-          }}
-          onClick={(event) => { setContextMenu(null); setGridMenuOpen(false); const target = event.target instanceof HTMLElement ? event.target : null; if (!target?.closest(".product-chip") && !selectionMoved.current) { setSelectedIds([]); setActiveProductId(null); setMobileMultiSelect(false); } selectionMoved.current = false; }}
-        >
-          {selectionBox && <div className="pointer-events-none absolute z-20 border border-blue-500 bg-blue-400/20" style={{ left: selectionBox.x, top: selectionBox.y, width: selectionBox.width, height: selectionBox.height }} />}
-          {floorPlanNotice && (
-            <div className="pointer-events-none absolute left-1/2 top-3 z-30 -translate-x-1/2 rounded-lg bg-red-600 px-4 py-2 text-center text-sm font-semibold text-white shadow-lg">
-              {floorPlanNotice}
+        if (!selectionStart.current) return; const rect = event.currentTarget.getBoundingClientRect(); const end = { x: event.clientX - rect.left, y: event.clientY - rect.top }; const width = Math.abs(end.x - selectionStart.current.x); const height = Math.abs(end.y - selectionStart.current.y); if (width > 3 || height > 3) selectionDragged.current = true; setSelectionBox({ x: Math.min(selectionStart.current.x, end.x), y: Math.min(selectionStart.current.y, end.y), width, height });
+      }} onPointerUp={() => { middlePanStart.current = null; selectionJustEnded.current = selectionDragged.current; if (selectionBox && selectionDragged.current && canvasRef.current) { const canvas = canvasRef.current.getBoundingClientRect(); const ids = [...canvasRef.current.querySelectorAll<HTMLElement>(".product-chip")].filter((node) => { const rect = node.getBoundingClientRect(); const left = rect.left - canvas.left; const top = rect.top - canvas.top; return left < selectionBox.x + selectionBox.width && left + rect.width > selectionBox.x && top < selectionBox.y + selectionBox.height && top + rect.height > selectionBox.y; }).map((node) => Number(node.dataset.productId)); const first = allProducts.find((item) => item.productId === ids[0]); setSelectedIds(first ? ids.filter((id) => allProducts.find((item) => item.productId === id)?.zone === first.zone) : []); } selectionStart.current = null; setSelectionBox(null); }} onPointerCancel={() => { middlePanStart.current = null; selectionStart.current = null; selectionDragged.current = false; selectionJustEnded.current = false; setSelectionBox(null); }} onClick={(event) => { const target = event.target as HTMLElement; if (!target.closest(".product-chip") && !target.closest(".canvas-control") && !selectionJustEnded.current) setSelectedIds([]); selectionJustEnded.current = false; }} onContextMenu={(event) => { const target = event.target as HTMLElement; if (!target.closest(".product-chip")) { event.preventDefault(); onRequestAdd(); } }}>
+        <div className="canvas-control absolute left-3 top-3 z-30 flex items-center gap-2 rounded-md border bg-white/95 p-2 text-xs shadow-sm"><span>{Math.round(scale * 100)}%</span><button className="underline" onClick={() => fitAll()}>Xem cả hai kho</button><button className="underline" onClick={() => resetTransform()}>Đặt lại</button>{overview && <span className="text-slate-500">Zoom gần để kéo thả</span>}</div>
+        <div className="canvas-control absolute right-3 top-3 z-30 flex w-64 items-center gap-2 rounded-md border bg-white/95 p-2 shadow-sm"><input ref={searchInputRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Tìm sản phẩm…" className="min-w-0 flex-1 bg-transparent text-sm outline-none" />{matches && <span className="text-xs text-slate-500">{matches.size}</span>}</div>
+        <aside className="pointer-events-none absolute bottom-3 left-3 z-30 hidden w-72 rounded-lg border border-slate-300 bg-white/95 px-3 py-2.5 text-xs text-slate-600 shadow-sm lg:block" aria-label="Hướng dẫn thao tác nhanh">
+          <p className="mb-2 font-semibold text-slate-900">Hướng dẫn nhanh</p>
+          <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-1.5 leading-4">
+            <kbd className="font-sans font-semibold text-slate-800">Click</kbd><span>Chọn chip · giữ <kbd className="font-sans font-semibold text-slate-800">Shift</kbd> để chọn thêm</span>
+            <kbd className="font-sans font-semibold text-slate-800">Kéo nền</kbd><span>Quét vùng để chọn nhiều chip</span>
+            <kbd className="font-sans font-semibold text-slate-800">Chuột giữa</kbd><span>Kéo để di chuyển camera</span>
+            <kbd className="font-sans font-semibold text-slate-800">Ctrl + lăn</kbd><span>Phóng to / thu nhỏ</span>
+            <kbd className="font-sans font-semibold text-slate-800">Chuột phải</kbd><span>Đổi màu, group, sắp xếp, hoàn tác</span>
+            <kbd className="font-sans font-semibold text-slate-800">Ctrl + Z</kbd><span>Hoàn tác thao tác gần nhất</span>
+          </div>
+          <p className="mt-2 border-t border-slate-200 pt-2 text-[11px] leading-4 text-slate-500">20%: màu · 30%: tên · từ 70%: tên, tồn kho và group.</p>
+        </aside>
+        {notice && <div className="pointer-events-none absolute left-1/2 top-14 z-40 -translate-x-1/2 rounded bg-red-600 px-3 py-2 text-sm font-semibold text-white shadow">{notice}</div>}
+        {selectionBox && <div className="pointer-events-none absolute z-20 border border-blue-500 bg-blue-400/20" style={{ left: selectionBox.x, top: selectionBox.y, width: selectionBox.width, height: selectionBox.height }} />}
+        <TransformComponent wrapperClass="!h-full !w-full" contentClass="!h-full !w-full"><div className="relative" style={{ width: CANVAS_SIZE, height: CANVAS_SIZE }}>
+          {zones.map((targetZone) => { const plan = getWarehouseFloorPlan(branchId, targetZone); return plan ? <WarehouseFloorPlan key={targetZone} plan={plan} offset={offsets.get(targetZone)} infoOffset={targetZone === "dry" && zones.includes("cold") ? { x: 1660, y: 0 } : undefined} /> : null; })}
+          {zones.includes("cold") && zones.includes("dry") && (
+            <div className="pointer-events-none absolute z-0 text-center text-slate-500" aria-hidden="true">
+              {/* Các đường này chỉ thể hiện phân khu; không còn giới hạn nơi đặt chip của Kho Khô. */}
+              <div className="absolute border-[6px] border-slate-500" style={{ left: 0, top: 0, width: 1600, height: 2600 }} />
+              <div className="absolute border-b-[6px] border-slate-500" style={{ left: 0, top: 1600, width: 1600 }} />
+              <div className="absolute border-[5px] border-dashed border-slate-400" style={{ left: 1100, top: 0, width: 500, height: 600 }} />
+              <div className="absolute flex items-center justify-center border-[5px] border-dashed border-slate-400 text-[26px] font-semibold" style={{ left: 0, top: 1600, width: 400, height: 600 }}>Kho Mát 1</div>
+              <div className="absolute left-0 flex h-[1000px] w-[1600px] items-center justify-center text-[30px] font-semibold" style={{ top: 1600 }}>Khu đóng hàng</div>
             </div>
           )}
-          <div className="absolute left-3 top-3 z-10 rounded-md border bg-white/90 px-2 py-1 text-xs text-slate-600 shadow-sm">
-            {Math.round(instance.transformState.scale * 100)}%
-            <button className="ml-2 underline" onClick={() => floorPlan ? fitFloorPlan() : resetTransform()}>Reset</button>
-          </div>
-          <TransformComponent wrapperClass="!h-full !w-full" contentClass="!h-full !w-full">
-            <div className="relative h-[10000px] w-[10000px]">
-              {floorPlan && <WarehouseFloorPlan plan={floorPlan} />}
-              {products.map((product) => (
-                <div key={product.productId} onFocus={() => setActiveProductId(product.productId)}>
-                  <DraggableProduct
-                    product={product}
-                    scale={instance.transformState.scale}
-                    selected={selectedIds.includes(product.productId)}
-                    groupDelta={dragPreview?.ids.includes(product.productId) ? { x: dragPreview.x, y: dragPreview.y } : null}
-                    dragDisabled={mobileMultiSelect || spacePressed || multiTouchGesture}
-                    multiTouchGesture={multiTouchGesture}
-                    showInventory={settings.showInventory}
-                    mobileMultiSelectEnabled={settings.mobileMultiSelect}
-                    onSelect={(shift) => {
-                      if (spacePressed) return;
-                      setContextMenu(null);
-                      setActiveProductId(product.productId);
-                      setSelectedIds((ids) => {
-                        if (mobileMultiSelect || shift) return ids.includes(product.productId) ? ids.filter((id) => id !== product.productId) : [...ids, product.productId];
-                        return [product.productId];
-                      });
-                    }}
-                    onMultiSelectStart={() => {
-                      setMobileMultiSelect(true);
-                      setActiveProductId(product.productId);
-                      setSelectedIds((ids) => ids.includes(product.productId) ? ids : [product.productId]);
-                    }}
-                    onLongPress={(x, y) => {
-                      const nextSelectedIds = selectedIds.includes(product.productId) ? selectedIds : [product.productId];
-                      setSelectedIds(nextSelectedIds);
-                      setGridMenuOpen(false);
-                      setContextMenu({ productId: product.productId, x, y, selectedIds: nextSelectedIds });
-                    }}
-                    onContextMenu={(event) => {
-                      event.preventDefault();
-                      const nextSelectedIds = selectedIds.includes(product.productId) ? selectedIds : [product.productId];
-                      setSelectedIds(nextSelectedIds);
-                      setGridMenuOpen(false);
-                      setContextMenu({ productId: product.productId, x: event.clientX, y: event.clientY, selectedIds: nextSelectedIds });
-                    }}
-                  />
-                </div>
-              ))}
-            </div>
-          </TransformComponent>
-        </div>
-      )}
+          {visibleProducts.map((product) => <ProductChip key={product.productId} product={product} world={worldPositions.get(product.productId) ?? { x: product.x, y: product.y }} scale={scale} selected={selectedSet.has(product.productId)} disabled={overview || spacePressed} overview={overview} showDetails={showDetails} dimmed={matches !== null && !matches.has(product.productId)} showInventory={settings.showInventory} onSelect={sameZoneSelection} onContextMenu={openContextMenu} />)}
+        </div></TransformComponent>
+      </div>}
     </TransformWrapper>
-    {contextMenu && <div className="fixed z-50 rounded-md border bg-white py-1 text-sm shadow-lg" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={(event) => event.stopPropagation()}>
-      <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-400" disabled={!undoCount} onClick={undoLastAction}>{`Hoàn tác (Ctrl+Z)${undoCount ? ` · ${undoCount}` : ""}`}</button>
-      <div className="my-1 border-t" />
-      <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100" disabled={contextMenu.selectedIds.length < 2} onClick={() => { const ids = contextMenu.selectedIds; const groupId = crypto.randomUUID(); void setProductLayoutsGroupAction({ branchId, zone, productIds: ids, groupId }).then((result) => { if (result.ok) { onProductsChange(products.map((product) => ids.includes(product.productId) ? { ...product, groupId } : product)); saveUndoState(products); } }); setContextMenu(null); setGridMenuOpen(false); }}>Group</button>
-      <div className="my-1 border-t" />
-      <div className="relative">
-        <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100" onClick={() => setColorMenuOpen((open) => !open)}>Đổi màu{contextMenu.selectedIds.length > 1 ? ` (${contextMenu.selectedIds.length})` : ""} ›</button>
-        {colorMenuOpen && <div className="absolute left-full top-0 z-10 ml-1 w-44 rounded-md border bg-white p-2 shadow-lg">
-          <div className="grid grid-cols-4 gap-2">
-            {CHIP_COLORS.map((color) => <button key={color.value} type="button" aria-label={color.name} title={color.name} className="h-7 rounded border-2 border-white ring-1 ring-slate-200 hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500" style={{ backgroundColor: color.value }} onClick={() => changeSelectedColor(color.value)} />)}
-          </div>
-          <label className="mt-2 flex items-center justify-between gap-2 text-xs text-slate-600">
-            Màu khác
-            <input type="color" className="h-7 w-9 cursor-pointer rounded border-0 bg-transparent p-0" defaultValue="#2563eb" aria-label="Chọn màu khác" onChange={(event) => changeSelectedColor(event.target.value)} />
-          </label>
-        </div>}
-      </div>
-      <div className="relative">
-        <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-400" disabled={contextMenu.selectedIds.length < 2} onClick={() => setGridMenuOpen((open) => !open)}>Sắp xếp theo lưới 5px ›</button>
-        {gridMenuOpen && <div className="absolute left-full top-0 z-10 ml-1 min-w-32 rounded-md border bg-white py-1 text-sm shadow-lg">
-          <button className="block w-full whitespace-nowrap px-3 py-1.5 text-left hover:bg-slate-100" onClick={() => arrangeSelectedInGrid()}>Tự động</button>
-          {[2, 3, 4, 5].map((columns) => <button key={columns} className="block w-full whitespace-nowrap px-3 py-1.5 text-left hover:bg-slate-100" onClick={() => arrangeSelectedInGrid(columns)}>{columns} cột</button>)}
-        </div>}
-      </div>
-      <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-400" disabled={contextMenu.selectedIds.length < 2} onClick={distributeSelectedVertically}>Xếp dọc, cách nhau 5px</button>
-      <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-400" disabled={contextMenu.selectedIds.length < 2} onClick={distributeSelectedHorizontally}>Xếp ngang, cách nhau 5px</button>
-      {contextMenuGroupId && <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100" onClick={() => { const ids = products.filter((product) => product.groupId === contextMenuGroupId).map((product) => product.productId); void setProductLayoutsGroupAction({ branchId, zone, productIds: ids, groupId: null }).then((result) => { if (result.ok) { onProductsChange(products.map((product) => ids.includes(product.productId) ? { ...product, groupId: null } : product)); saveUndoState(products); } }); setContextMenu(null); setGridMenuOpen(false); }}>Ungroup</button>}
-    </div>}
-    {settings.mobileTrashDropZone && dragging && trashVisible && <TrashDropZone />}
-    </DndContext>
-  );
+    {contextMenu && <div className="fixed z-50 min-w-52 rounded-md border bg-white py-1 text-sm shadow-lg" style={{ left: contextMenu.x, top: contextMenu.y }}><button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:text-slate-400" disabled={!undoCount} onClick={undo}>Hoàn tác (Ctrl+Z){undoCount ? ` · ${undoCount}` : ""}</button><div className="my-1 border-t" /><button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:text-slate-400" disabled={selectedProducts.length < 2} onClick={() => group(crypto.randomUUID())}>Group</button><button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:text-slate-400" disabled={!selectedProducts.some((item) => item.groupId)} onClick={() => group(null)}>Ungroup</button><div className="my-1 border-t" /><div className="grid grid-cols-4 gap-2 px-3 py-2">{CHIP_COLORS.map((color) => <button key={color} aria-label={`Đổi màu ${color}`} className="h-7 rounded ring-1 ring-slate-300 hover:scale-110" style={{ backgroundColor: color }} onClick={() => changeColor(color)} />)}</div><div className="my-1 border-t" /><button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:text-slate-400" disabled={selectedProducts.length < 2} onClick={() => arrange("vertical")}>Xếp dọc, cách nhau 5px</button><button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:text-slate-400" disabled={selectedProducts.length < 2} onClick={() => arrange("horizontal")}>Xếp ngang, cách nhau 5px</button><button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:text-slate-400" disabled={selectedProducts.length < 2} onClick={() => arrange("grid")}>Sắp xếp theo lưới 5px</button><button className="block w-full px-3 py-1.5 text-left text-red-600 hover:bg-red-50" onClick={removeSelected}>Xóa</button></div>}
+  </DndContext>;
 }

@@ -75,14 +75,9 @@ const CAO_LANH_DRY_FLOOR_PLAN: WarehouseFloorPlan = {
   displayTitle: "KHO KHÔ CAO LÃNH",
   displaySubtitle: "Mặt bằng tổng thể · khu đặt chip bên phải khoảng 13,91 × 65 m",
   showPackingLabel: false,
-  excludedAreas: [
-    { name: "Kho Đông", x: 0, y: 0, width: 16 * 100, height: 16 * 100, muted: true },
-    { name: "Khu Soạn Hàng", x: 0, y: 16 * 100, width: 16 * 100, height: 10 * 100, muted: true },
-  ],
-  overviewAreas: [
-    { name: "Kho Mát 2", x: 11 * 100, y: 0, width: 5 * 100, height: 6 * 100, muted: true },
-    { name: "Kho Mát 1", x: 0, y: 16 * 100, width: 4 * 100, height: 6 * 100, muted: true },
-  ],
+  // Phần bên trái là vị trí thật của Kho Đông, được render bằng floor plan riêng.
+  excludedAreas: [],
+  overviewAreas: [],
   highlightAreas: [
     { name: "Kho Khô", x: 16 * 100, y: 0, width: 13.91 * 100, height: 65 * 100 },
   ],

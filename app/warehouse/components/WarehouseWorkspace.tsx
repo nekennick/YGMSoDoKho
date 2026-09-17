@@ -62,6 +62,7 @@ export function WarehouseWorkspace({ result, branchId, zone }: { result: Warehou
         x: product.x,
         y: product.y,
         color: product.color,
+        zone,
       })),
     ]);
     setAvailableProducts((current) => current.filter((candidate) => !addedIds.has(candidate.productId)));

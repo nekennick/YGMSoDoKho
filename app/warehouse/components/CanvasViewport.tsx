@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { DndContext, PointerSensor, type DragEndEvent, type DragStartEvent, useDraggable, useSensor, useSensors } from "@dnd-kit/core";
+import { DndContext, PointerSensor, type DragEndEvent, type DragMoveEvent, type DragStartEvent, useDraggable, useSensor, useSensors } from "@dnd-kit/core";
 import { TransformComponent, TransformWrapper, type ReactZoomPanPinchRef } from "react-zoom-pan-pinch";
 import type { CanvasProduct } from "@/lib/product-catalog/merge";
 import { useKeyboard } from "@/app/warehouse/hooks/useKeyboard";
@@ -15,9 +15,17 @@ const DETAILS_VISIBLE_SCALE = 0.7;
 const CANVAS_SIZE = 12000;
 const PLAN_GAP = 520;
 const CHIP_COLORS = ["#2563eb", "#059669", "#d97706", "#dc2626", "#7c3aed", "#db2777", "#475569", "#92400e"];
+const COLD_ZONE_RESERVED_FOR_DRY = { x: 0, y: 0, width: 1600, height: 2600 };
 
 type ZonedProduct = CanvasProduct & { zone: string };
 type Point = { x: number; y: number };
+
+function overlapsReservedColdZone(position: { x: number; y: number }) {
+  return position.x < COLD_ZONE_RESERVED_FOR_DRY.x + COLD_ZONE_RESERVED_FOR_DRY.width
+    && position.x + PRODUCT_CHIP_WIDTH > COLD_ZONE_RESERVED_FOR_DRY.x
+    && position.y < COLD_ZONE_RESERVED_FOR_DRY.y + COLD_ZONE_RESERVED_FOR_DRY.height
+    && position.y + PRODUCT_CHIP_HEIGHT > COLD_ZONE_RESERVED_FOR_DRY.y;
+}
 
 function zoneOffsets(branchId: number, zones: readonly string[]) {
   if (zones.includes("cold") && zones.includes("dry")) {
@@ -37,10 +45,10 @@ function zoneOffsets(branchId: number, zones: readonly string[]) {
   return offsets;
 }
 
-const ProductChip = memo(function ProductChip({ product, world, scale, selected, disabled, overview, showDetails, dimmed, showInventory, onSelect, onContextMenu }: { product: ZonedProduct; world: Point; scale: number; selected: boolean; disabled: boolean; overview: boolean; showDetails: boolean; dimmed: boolean; showInventory: boolean; onSelect: (productId: number, shift: boolean) => void; onContextMenu: (productId: number, event: React.MouseEvent) => void }) {
+const ProductChip = memo(function ProductChip({ product, world, scale, selected, disabled, overview, showDetails, dimmed, showInventory, groupDelta, onSelect, onContextMenu }: { product: ZonedProduct; world: Point; scale: number; selected: boolean; disabled: boolean; overview: boolean; showDetails: boolean; dimmed: boolean; showInventory: boolean; groupDelta: Point | null; onSelect: (productId: number, shift: boolean) => void; onContextMenu: (productId: number, event: React.MouseEvent) => void }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: product.productId, disabled });
-  const dx = (transform?.x ?? 0) / scale;
-  const dy = (transform?.y ?? 0) / scale;
+  const dx = isDragging ? (transform?.x ?? 0) / scale : (groupDelta?.x ?? 0);
+  const dy = isDragging ? (transform?.y ?? 0) / scale : (groupDelta?.y ?? 0);
   if (overview) {
     return <div title={product.name} data-product-id={product.productId} className={`product-chip absolute h-10 w-[250px] rounded-md border border-white/70 shadow-sm ${selected ? "ring-4 ring-yellow-300" : ""} ${dimmed ? "opacity-20" : "opacity-95"}`} style={{ left: world.x, top: world.y, backgroundColor: product.color }} />;
   }
@@ -59,7 +67,8 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onP
   const { spacePressed } = useKeyboard();
   const { settings } = useWarehouseSettings();
   const allProducts = products as ZonedProduct[];
-  const zones = useMemo(() => [...new Set(allProducts.map((item) => item.zone ?? zone))].sort((a, b) => a === "cold" ? -1 : b === "cold" ? 1 : a.localeCompare(b)), [allProducts, zone]);
+  const zoneKey = [...new Set(allProducts.map((item) => item.zone ?? zone))].sort((a, b) => a === "cold" ? -1 : b === "cold" ? 1 : a.localeCompare(b)).join("|");
+  const zones = useMemo(() => zoneKey ? zoneKey.split("|") : [zone], [zone, zoneKey]);
   const offsets = useMemo(() => zoneOffsets(branchId, zones), [branchId, zones]);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
   const [scale, setScale] = useState(0.3);
@@ -69,6 +78,7 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onP
   const [notice, setNotice] = useState<string | null>(null);
   const [undoCount, setUndoCount] = useState(0);
   const [selectionBox, setSelectionBox] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
+  const [dragPreview, setDragPreview] = useState<{ ids: number[]; x: number; y: number } | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const transformRef = useRef<ReactZoomPanPinchRef | null>(null);
@@ -77,10 +87,13 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onP
   const selectionStart = useRef<Point | null>(null);
   const selectionDragged = useRef(false);
   const selectionJustEnded = useRef(false);
+  const selectedIdsRef = useRef(selectedIds);
+  const draggingIdsRef = useRef<number[]>([]);
   const middlePanStart = useRef<{ x: number; y: number; positionX: number; positionY: number } | null>(null);
   const overview = scale < NAME_VISIBLE_SCALE;
   const showDetails = scale >= DETAILS_VISIBLE_SCALE;
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  selectedIdsRef.current = selectedIds;
   const normalizedQuery = query.trim().toLocaleLowerCase("vi");
   const matches = useMemo(() => normalizedQuery ? new Set(allProducts.filter((item) => item.name.toLocaleLowerCase("vi").includes(normalizedQuery)).map((item) => item.productId)) : null, [allProducts, normalizedQuery]);
 
@@ -119,16 +132,22 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onP
   }, [onProductsChange, onProductsRestored, restoreSnapshot, trackMutation]);
   const selectedProducts = useMemo(() => allProducts.filter((item) => selectedSet.has(item.productId)), [allProducts, selectedSet]);
   const selectedZone = selectedProducts[0]?.zone;
-  const canPlace = useCallback((next: ZonedProduct[], ids: readonly number[]) => next.filter((item) => ids.includes(item.productId)).every((item) => { const plan = getWarehouseFloorPlan(branchId, item.zone); return !plan || isPositionInsideFloorPlan(plan, item); }), [branchId]);
+  const canPlace = useCallback((next: ZonedProduct[], ids: readonly number[]) => next.filter((item) => ids.includes(item.productId)).every((item) => {
+    const plan = getWarehouseFloorPlan(branchId, item.zone);
+    if (item.zone === "dry" && getWarehouseFloorPlan(branchId, "cold") && overlapsReservedColdZone(item)) return false;
+    return !plan || isPositionInsideFloorPlan(plan, item);
+  }), [branchId]);
   const persistPositions = useCallback((next: ZonedProduct[], ids: number[]) => Promise.all(zones.map((targetZone) => {
     const positions = next.filter((item) => item.zone === targetZone && ids.includes(item.productId)).map(({ productId, x, y }) => ({ productId, x, y }));
     return positions.length ? updateProductPositionsAction({ branchId, zone: targetZone, positions }) : Promise.resolve({ ok: true });
   })).then((results) => results.every((item) => item.ok)), [branchId, zones]);
   const updatePositions = useCallback((next: ZonedProduct[], ids: number[]) => {
+    const crossesColdZone = next.some((item) => ids.includes(item.productId) && item.zone === "dry" && getWarehouseFloorPlan(branchId, "cold") && overlapsReservedColdZone(item));
+    if (crossesColdZone) { setNotice("Không thể đưa chip Kho Khô vào phạm vi Kho Đông."); return; }
     if (!canPlace(next, ids)) { setNotice("Vị trí này nằm trong khu vực không được đặt chip."); return; }
     saveUndo(allProducts); onProductsChange(next);
     void trackMutation(persistPositions(next, ids)).then((ok) => { if (!ok) { onProductsChange(allProducts); setNotice("Không thể lưu vị trí chip."); } });
-  }, [allProducts, canPlace, onProductsChange, persistPositions, saveUndo, trackMutation]);
+  }, [allProducts, branchId, canPlace, onProductsChange, persistPositions, saveUndo, trackMutation]);
   const arrange = useCallback((kind: "vertical" | "horizontal" | "grid") => {
     if (selectedProducts.length < 2 || !selectedZone) return;
     const ordered = [...selectedProducts].sort((a, b) => a.y - b.y || a.x - b.x);
@@ -185,7 +204,32 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onP
   useEffect(() => { const listener = (event: KeyboardEvent) => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") { event.preventDefault(); undo(); return; } if ((event.key === "Delete" || event.key === "Backspace") && selectedIds.length) { event.preventDefault(); removeSelected(); } }; window.addEventListener("keydown", listener); return () => window.removeEventListener("keydown", listener); }, [removeSelected, selectedIds.length, undo]);
   const visibleProducts = useMemo(() => allProducts, [allProducts]);
 
-  return <DndContext sensors={sensors} onDragStart={(event: DragStartEvent) => { if (overview || spacePressed) return; const item = allProducts.find((product) => product.productId === Number(event.active.id)); if (!item) return; const ids = item.groupId ? allProducts.filter((product) => product.zone === item.zone && product.groupId === item.groupId).map((product) => product.productId) : selectedSet.has(item.productId) ? selectedIds : [item.productId]; setSelectedIds(ids); }} onDragEnd={(event: DragEndEvent) => { if (overview || !event.delta.x && !event.delta.y) return; const id = Number(event.active.id); const active = allProducts.find((item) => item.productId === id); if (!active) return; const moving = active.groupId ? allProducts.filter((item) => item.zone === active.zone && item.groupId === active.groupId).map((item) => item.productId) : selectedSet.has(id) ? selectedIds : [id]; const currentScale = transformRef.current?.instance.transformState.scale ?? 1; const next = allProducts.map((item) => moving.includes(item.productId) ? { ...item, x: item.x + event.delta.x / currentScale, y: item.y + event.delta.y / currentScale } : item); updatePositions(next, moving); }}>
+  return <DndContext sensors={sensors} onDragStart={(event: DragStartEvent) => {
+    if (overview || spacePressed) return;
+    const item = allProducts.find((product) => product.productId === Number(event.active.id));
+    if (!item) return;
+    const currentSelection = selectedIdsRef.current;
+    const ids = item.groupId
+      ? allProducts.filter((product) => product.zone === item.zone && product.groupId === item.groupId).map((product) => product.productId)
+      : currentSelection.includes(item.productId) ? currentSelection : [item.productId];
+    draggingIdsRef.current = ids;
+    setSelectedIds(ids);
+    setDragPreview({ ids, x: 0, y: 0 });
+  }} onDragMove={(event: DragMoveEvent) => {
+    const currentScale = transformRef.current?.instance.transformState.scale ?? 1;
+    if (draggingIdsRef.current.length) setDragPreview({ ids: draggingIdsRef.current, x: event.delta.x / currentScale, y: event.delta.y / currentScale });
+  }} onDragCancel={() => { draggingIdsRef.current = []; setDragPreview(null); }} onDragEnd={(event: DragEndEvent) => {
+    const moving = draggingIdsRef.current;
+    draggingIdsRef.current = [];
+    setDragPreview(null);
+    if (overview || (!event.delta.x && !event.delta.y)) return;
+    const id = Number(event.active.id); const active = allProducts.find((item) => item.productId === id);
+    if (!active) return;
+    const ids = moving.length ? moving : [id];
+    const currentScale = transformRef.current?.instance.transformState.scale ?? 1;
+    const next = allProducts.map((item) => ids.includes(item.productId) ? { ...item, x: item.x + event.delta.x / currentScale, y: item.y + event.delta.y / currentScale } : item);
+    updatePositions(next, ids);
+  }}>
     <TransformWrapper ref={transformRef} minScale={0.2} maxScale={4} limitToBounds={false} centerZoomedOut={false} wheel={{ activationKeys: ["Control"], step: 0.02 }} panning={{ disabled: !spacePressed, excluded: ["product-chip", "canvas-control"] }} doubleClick={{ disabled: true }} onTransformed={(_, state) => setScale((current) => Math.abs(current - state.scale) > 0.01 ? state.scale : current)}>
       {({ resetTransform }) => <div ref={canvasRef} className="relative h-full overflow-hidden bg-slate-200" onPointerDown={(event) => {
         const target = event.target as HTMLElement;
@@ -209,18 +253,6 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onP
       }} onPointerUp={() => { middlePanStart.current = null; selectionJustEnded.current = selectionDragged.current; if (selectionBox && selectionDragged.current && canvasRef.current) { const canvas = canvasRef.current.getBoundingClientRect(); const ids = [...canvasRef.current.querySelectorAll<HTMLElement>(".product-chip")].filter((node) => { const rect = node.getBoundingClientRect(); const left = rect.left - canvas.left; const top = rect.top - canvas.top; return left < selectionBox.x + selectionBox.width && left + rect.width > selectionBox.x && top < selectionBox.y + selectionBox.height && top + rect.height > selectionBox.y; }).map((node) => Number(node.dataset.productId)); const first = allProducts.find((item) => item.productId === ids[0]); setSelectedIds(first ? ids.filter((id) => allProducts.find((item) => item.productId === id)?.zone === first.zone) : []); } selectionStart.current = null; setSelectionBox(null); }} onPointerCancel={() => { middlePanStart.current = null; selectionStart.current = null; selectionDragged.current = false; selectionJustEnded.current = false; setSelectionBox(null); }} onClick={(event) => { const target = event.target as HTMLElement; if (!target.closest(".product-chip") && !target.closest(".canvas-control") && !selectionJustEnded.current) setSelectedIds([]); selectionJustEnded.current = false; }} onContextMenu={(event) => { const target = event.target as HTMLElement; if (!target.closest(".product-chip")) { event.preventDefault(); onRequestAdd(); } }}>
         <div className="canvas-control absolute left-3 top-3 z-30 flex items-center gap-2 rounded-md border bg-white/95 p-2 text-xs shadow-sm"><span>{Math.round(scale * 100)}%</span><button className="underline" onClick={() => fitAll()}>Xem cả hai kho</button><button className="underline" onClick={() => resetTransform()}>Đặt lại</button>{overview && <span className="text-slate-500">Zoom gần để kéo thả</span>}</div>
         <div className="canvas-control absolute right-3 top-3 z-30 flex w-64 items-center gap-2 rounded-md border bg-white/95 p-2 shadow-sm"><input ref={searchInputRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Tìm sản phẩm…" className="min-w-0 flex-1 bg-transparent text-sm outline-none" />{matches && <span className="text-xs text-slate-500">{matches.size}</span>}</div>
-        <aside className="pointer-events-none absolute bottom-3 left-3 z-30 hidden w-72 rounded-lg border border-slate-300 bg-white/95 px-3 py-2.5 text-xs text-slate-600 shadow-sm lg:block" aria-label="Hướng dẫn thao tác nhanh">
-          <p className="mb-2 font-semibold text-slate-900">Hướng dẫn nhanh</p>
-          <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-1.5 leading-4">
-            <kbd className="font-sans font-semibold text-slate-800">Click</kbd><span>Chọn chip · giữ <kbd className="font-sans font-semibold text-slate-800">Shift</kbd> để chọn thêm</span>
-            <kbd className="font-sans font-semibold text-slate-800">Kéo nền</kbd><span>Quét vùng để chọn nhiều chip</span>
-            <kbd className="font-sans font-semibold text-slate-800">Chuột giữa</kbd><span>Kéo để di chuyển camera</span>
-            <kbd className="font-sans font-semibold text-slate-800">Ctrl + lăn</kbd><span>Phóng to / thu nhỏ</span>
-            <kbd className="font-sans font-semibold text-slate-800">Chuột phải</kbd><span>Đổi màu, group, sắp xếp, hoàn tác</span>
-            <kbd className="font-sans font-semibold text-slate-800">Ctrl + Z</kbd><span>Hoàn tác thao tác gần nhất</span>
-          </div>
-          <p className="mt-2 border-t border-slate-200 pt-2 text-[11px] leading-4 text-slate-500">20%: màu · 30%: tên · từ 70%: tên, tồn kho và group.</p>
-        </aside>
         {notice && <div className="pointer-events-none absolute left-1/2 top-14 z-40 -translate-x-1/2 rounded bg-red-600 px-3 py-2 text-sm font-semibold text-white shadow">{notice}</div>}
         {selectionBox && <div className="pointer-events-none absolute z-20 border border-blue-500 bg-blue-400/20" style={{ left: selectionBox.x, top: selectionBox.y, width: selectionBox.width, height: selectionBox.height }} />}
         <TransformComponent wrapperClass="!h-full !w-full" contentClass="!h-full !w-full"><div className="relative" style={{ width: CANVAS_SIZE, height: CANVAS_SIZE }}>
@@ -235,7 +267,28 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onP
               <div className="absolute left-0 flex h-[1000px] w-[1600px] items-center justify-center text-[30px] font-semibold" style={{ top: 1600 }}>Khu đóng hàng</div>
             </div>
           )}
-          {visibleProducts.map((product) => <ProductChip key={product.productId} product={product} world={worldPositions.get(product.productId) ?? { x: product.x, y: product.y }} scale={scale} selected={selectedSet.has(product.productId)} disabled={overview || spacePressed} overview={overview} showDetails={showDetails} dimmed={matches !== null && !matches.has(product.productId)} showInventory={settings.showInventory} onSelect={sameZoneSelection} onContextMenu={openContextMenu} />)}
+          <aside className="pointer-events-none absolute w-[1080px] rounded-2xl border-4 border-slate-300 bg-white/90 px-10 py-9 text-[34px] leading-relaxed text-slate-600 shadow-sm" style={{ left: -1140, top: 220 }} aria-label="Hướng dẫn thao tác nhanh">
+            <p className="text-[54px] font-extrabold text-slate-900">Cách thao tác</p>
+            <div className="space-y-5">
+              <section>
+                <p className="mb-1 text-[30px] font-bold uppercase tracking-wide text-blue-700">1. Chọn và di chuyển chip</p>
+                <p><strong className="text-slate-900">Click chip</strong> để chọn · <strong className="text-slate-900">Shift + click</strong> để chọn thêm</p>
+                <p><strong className="text-slate-900">Kéo nền trống</strong> để quét chọn nhiều chip · <strong className="text-slate-900">Kéo chip</strong> để đổi vị trí</p>
+              </section>
+              <section>
+                <p className="mb-1 text-[30px] font-bold uppercase tracking-wide text-blue-700">2. Xem sơ đồ</p>
+                <p><strong className="text-slate-900">Giữ chuột giữa và kéo</strong> để xem khu vực khác</p>
+                <p><strong className="text-slate-900">Ctrl + lăn chuột</strong> để phóng to hoặc thu nhỏ</p>
+              </section>
+              <section>
+                <p className="mb-1 text-[30px] font-bold uppercase tracking-wide text-blue-700">3. Chỉnh sửa</p>
+                <p><strong className="text-slate-900">Chuột phải vào chip</strong> để đổi màu, group hoặc sắp xếp</p>
+                <p><strong className="text-slate-900">Ctrl + Z</strong> để quay lại thao tác vừa làm</p>
+              </section>
+            </div>
+            <p className="mt-6 border-t-2 border-slate-200 pt-5 text-[28px]">Mẹo: zoom từ 30% để đọc tên và kéo chip.</p>
+          </aside>
+          {visibleProducts.map((product) => <ProductChip key={product.productId} product={product} world={worldPositions.get(product.productId) ?? { x: product.x, y: product.y }} scale={scale} selected={selectedSet.has(product.productId)} disabled={overview || spacePressed} overview={overview} showDetails={showDetails} dimmed={matches !== null && !matches.has(product.productId)} showInventory={settings.showInventory} groupDelta={dragPreview?.ids.includes(product.productId) ? { x: dragPreview.x, y: dragPreview.y } : null} onSelect={sameZoneSelection} onContextMenu={openContextMenu} />)}
         </div></TransformComponent>
       </div>}
     </TransformWrapper>

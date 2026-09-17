@@ -27,7 +27,7 @@ export type WarehouseFloorPlan = {
   additionalUsableAreas: Array<FloorPlanRect & { name: string }>;
 };
 
-export const PRODUCT_CHIP_WIDTH = 205;
+export const PRODUCT_CHIP_WIDTH = 250;
 export const PRODUCT_CHIP_HEIGHT = 40;
 
 const CAO_LANH_COLD_FLOOR_PLAN: WarehouseFloorPlan = {

@@ -101,6 +101,13 @@ export async function setProductLayoutsGroup(productIds: number[], branchId: num
   await prisma.productLayout.updateMany({ where: { branchId, zone, productId: { in: productIds } }, data: { groupId } });
 }
 
+export async function updateProductLayoutsColor(productIds: number[], branchId: number, zone: string, color: string): Promise<void> {
+  await prisma.productLayout.updateMany({
+    where: { branchId, zone, productId: { in: productIds } },
+    data: { color },
+  });
+}
+
 export async function restoreProductLayouts(inputs: Array<CreateProductLayoutInput & { groupId?: string | null }>): Promise<void> {
   await prisma.$transaction(inputs.map((input) => prisma.productLayout.upsert({
     where: { branchId_zone_productId: { branchId: input.branchId, zone: input.zone, productId: input.productId } },

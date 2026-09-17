@@ -3,6 +3,7 @@
 import { z } from "zod";
 import { updateProductPosition } from "@/lib/product-layout/repository";
 import { updateProductPositions } from "@/lib/product-layout/repository";
+import { updateProductLayoutsColor } from "@/lib/product-layout/repository";
 import { createProductLayout } from "@/lib/product-layout/repository";
 import { createProductLayouts } from "@/lib/product-layout/repository";
 import { deleteProductLayout } from "@/lib/product-layout/repository";
@@ -177,6 +178,24 @@ export async function setProductLayoutsGroupAction(input: unknown): Promise<{ ok
     return { ok: true, groupId: parsed.data.groupId };
   } catch {
     return { ok: false, message: "Không thể cập nhật nhóm sản phẩm." };
+  }
+}
+
+const batchColorSchema = z.object({
+  branchId: z.number().int().positive(),
+  zone: z.string().min(1),
+  productIds: z.array(z.number().int().positive()).min(1),
+  color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+});
+
+export async function updateProductColorsAction(input: unknown): Promise<{ ok: true } | { ok: false; message: string }> {
+  const parsed = batchColorSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, message: "Màu sản phẩm không hợp lệ." };
+  try {
+    await updateProductLayoutsColor(parsed.data.productIds, parsed.data.branchId, parsed.data.zone, parsed.data.color);
+    return { ok: true };
+  } catch {
+    return { ok: false, message: "Không thể cập nhật màu sản phẩm." };
   }
 }
 

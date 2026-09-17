@@ -6,7 +6,7 @@ import { useDroppable } from "@dnd-kit/core";
 import { TransformComponent, TransformWrapper, type ReactZoomPanPinchRef } from "react-zoom-pan-pinch";
 import type { CanvasProduct } from "@/lib/product-catalog/merge";
 import { useKeyboard } from "@/app/warehouse/hooks/useKeyboard";
-import { restoreProductLayoutsAction, updateProductPositionAction, updateProductPositionsAction, setProductLayoutsGroupAction } from "@/app/warehouse/actions/product-layout";
+import { restoreProductLayoutsAction, updateProductColorsAction, updateProductPositionAction, updateProductPositionsAction, setProductLayoutsGroupAction } from "@/app/warehouse/actions/product-layout";
 import { deleteProductLayoutAction } from "@/app/warehouse/actions/product-layout";
 import { WarehouseFloorPlan } from "@/app/warehouse/components/WarehouseFloorPlan";
 import {
@@ -19,6 +19,17 @@ import {
   PRODUCT_CHIP_WIDTH,
 } from "@/lib/warehouse/floor-plans";
 import { useWarehouseSettings } from "@/app/warehouse/components/WarehouseSettings";
+
+const CHIP_COLORS = [
+  { name: "Xanh dương", value: "#2563eb" },
+  { name: "Xanh lá", value: "#059669" },
+  { name: "Cam", value: "#d97706" },
+  { name: "Đỏ", value: "#dc2626" },
+  { name: "Tím", value: "#7c3aed" },
+  { name: "Hồng", value: "#db2777" },
+  { name: "Xám", value: "#475569" },
+  { name: "Nâu", value: "#92400e" },
+];
 
 function TrashDropZone() {
   const { isOver, setNodeRef } = useDroppable({ id: "trash-zone" });
@@ -87,7 +98,7 @@ function DraggableProduct({ product, scale, selected, groupDelta, dragDisabled, 
       }}
       onContextMenu={onContextMenu}
       data-product-id={product.productId}
-      className={`product-chip absolute flex h-10 w-[205px] min-w-[205px] max-w-[205px] touch-none items-center overflow-hidden rounded-lg border px-3 text-sm font-medium text-white shadow-sm transition-[filter,box-shadow] ${selected ? "border-yellow-300 brightness-125 saturate-150 ring-4 ring-yellow-300/80 ring-offset-2 ring-offset-slate-50" : product.groupId ? "border-violet-200 ring-2 ring-violet-300/80 ring-offset-1 ring-offset-slate-50" : "border-slate-200"}`}
+      className={`product-chip absolute flex h-10 w-[250px] min-w-[250px] max-w-[250px] touch-none items-center overflow-hidden rounded-lg border px-3 text-3xl font-medium text-white shadow-sm transition-[filter,box-shadow] ${selected ? "border-yellow-300 brightness-125 saturate-150 ring-4 ring-yellow-300/80 ring-offset-2 ring-offset-slate-50" : product.groupId ? "border-violet-200 ring-2 ring-violet-300/80 ring-offset-1 ring-offset-slate-50" : "border-slate-200"}`}
       style={{
         left: product.x,
         top: product.y,
@@ -97,9 +108,8 @@ function DraggableProduct({ product, scale, selected, groupDelta, dragDisabled, 
         opacity: isDragging && !multiTouchGesture ? 0.8 : 1,
       }}
     >
-      <span aria-hidden="true" className="mr-1.5 shrink-0">📦</span>
       <span className="min-w-0 flex-1 truncate" title={product.name}>{product.name}</span>
-      {showInventory && <span className="ml-2 shrink-0 text-xs font-normal text-white/80">({product.quantity})</span>}
+      {showInventory && <span className="ml-2 shrink-0 text-sm font-normal text-white/80">({product.quantity})</span>}
       {product.groupId && <span aria-label="Đã group" className="ml-1.5 shrink-0 text-xs" title="Đã group">⛓</span>}
     </div>
   );
@@ -118,6 +128,7 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onP
   const [isTouchDevice, setIsTouchDevice] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ productId: number; x: number; y: number; selectedIds: number[] } | null>(null);
   const [gridMenuOpen, setGridMenuOpen] = useState(false);
+  const [colorMenuOpen, setColorMenuOpen] = useState(false);
   const [mobileMultiSelect, setMobileMultiSelect] = useState(false);
   const [multiTouchGesture, setMultiTouchGesture] = useState(false);
   const [floorPlanNotice, setFloorPlanNotice] = useState<string | null>(null);
@@ -413,6 +424,24 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onP
     setContextMenu(null);
   };
 
+  const changeSelectedColor = (color: string) => {
+    const ids = contextMenu?.selectedIds ?? [];
+    if (!ids.length) return;
+    const undoState = saveUndoState(products);
+    const nextProducts = products.map((product) => ids.includes(product.productId) ? { ...product, color } : product);
+    onProductsChange(nextProducts);
+    void trackMutation(updateProductColorsAction({ branchId, zone, productIds: ids, color })).then((result) => {
+      if (!result.ok && discardUndoState(undoState)) onProductsChange(products);
+    });
+    setColorMenuOpen(false);
+    setGridMenuOpen(false);
+    setContextMenu(null);
+  };
+
+  useEffect(() => {
+    if (!contextMenu) setColorMenuOpen(false);
+  }, [contextMenu]);
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.target instanceof HTMLElement && (event.target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(event.target.tagName))) return;
@@ -689,6 +718,18 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onP
       <div className="my-1 border-t" />
       <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100" disabled={contextMenu.selectedIds.length < 2} onClick={() => { const ids = contextMenu.selectedIds; const groupId = crypto.randomUUID(); void setProductLayoutsGroupAction({ branchId, zone, productIds: ids, groupId }).then((result) => { if (result.ok) { onProductsChange(products.map((product) => ids.includes(product.productId) ? { ...product, groupId } : product)); saveUndoState(products); } }); setContextMenu(null); setGridMenuOpen(false); }}>Group</button>
       <div className="my-1 border-t" />
+      <div className="relative">
+        <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100" onClick={() => setColorMenuOpen((open) => !open)}>Đổi màu{contextMenu.selectedIds.length > 1 ? ` (${contextMenu.selectedIds.length})` : ""} ›</button>
+        {colorMenuOpen && <div className="absolute left-full top-0 z-10 ml-1 w-44 rounded-md border bg-white p-2 shadow-lg">
+          <div className="grid grid-cols-4 gap-2">
+            {CHIP_COLORS.map((color) => <button key={color.value} type="button" aria-label={color.name} title={color.name} className="h-7 rounded border-2 border-white ring-1 ring-slate-200 hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500" style={{ backgroundColor: color.value }} onClick={() => changeSelectedColor(color.value)} />)}
+          </div>
+          <label className="mt-2 flex items-center justify-between gap-2 text-xs text-slate-600">
+            Màu khác
+            <input type="color" className="h-7 w-9 cursor-pointer rounded border-0 bg-transparent p-0" defaultValue="#2563eb" aria-label="Chọn màu khác" onChange={(event) => changeSelectedColor(event.target.value)} />
+          </label>
+        </div>}
+      </div>
       <div className="relative">
         <button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-400" disabled={contextMenu.selectedIds.length < 2} onClick={() => setGridMenuOpen((open) => !open)}>Sắp xếp theo lưới 5px ›</button>
         {gridMenuOpen && <div className="absolute left-full top-0 z-10 ml-1 min-w-32 rounded-md border bg-white py-1 text-sm shadow-lg">

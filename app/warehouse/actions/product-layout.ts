@@ -3,6 +3,7 @@
 import { z } from "zod";
 import { updateProductPosition } from "@/lib/product-layout/repository";
 import { updateProductPositions } from "@/lib/product-layout/repository";
+import { moveProductLayouts } from "@/lib/product-layout/repository";
 import { updateProductLayoutsColor } from "@/lib/product-layout/repository";
 import { createProductLayout } from "@/lib/product-layout/repository";
 import { createProductLayouts } from "@/lib/product-layout/repository";
@@ -178,6 +179,32 @@ export async function setProductLayoutsGroupAction(input: unknown): Promise<{ ok
     return { ok: true, groupId: parsed.data.groupId };
   } catch {
     return { ok: false, message: "Không thể cập nhật nhóm sản phẩm." };
+  }
+}
+
+const moveLayoutsSchema = z.object({
+  branchId: z.number().int().positive(),
+  products: z.array(z.object({
+    productId: z.number().int().positive(),
+    zone: z.string().min(1),
+    x: z.number().finite(),
+    y: z.number().finite(),
+  })).min(1),
+});
+
+export async function moveProductLayoutsAction(input: unknown): Promise<{ ok: true } | { ok: false; message: string }> {
+  const parsed = moveLayoutsSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, message: "Vị trí kho đích không hợp lệ." };
+  const invalidPosition = parsed.data.products.some((product) => {
+    const floorPlan = getWarehouseFloorPlan(parsed.data.branchId, product.zone);
+    return floorPlan && !isPositionInsideFloorPlan(floorPlan, product);
+  });
+  if (invalidPosition) return { ok: false, message: "Có chip nằm ngoài phạm vi kho đích." };
+  try {
+    await moveProductLayouts(parsed.data.products.map((product) => ({ ...product, branchId: parsed.data.branchId })));
+    return { ok: true };
+  } catch {
+    return { ok: false, message: "Không thể lưu vị trí chip." };
   }
 }
 

@@ -5,9 +5,9 @@ import { DndContext, PointerSensor, type DragEndEvent, type DragMoveEvent, type 
 import { TransformComponent, TransformWrapper, type ReactZoomPanPinchRef } from "react-zoom-pan-pinch";
 import type { CanvasProduct } from "@/lib/product-catalog/merge";
 import { useKeyboard } from "@/app/warehouse/hooks/useKeyboard";
-import { deleteProductLayoutAction, restoreProductLayoutsAction, setProductLayoutsGroupAction, updateProductColorsAction, updateProductPositionsAction } from "@/app/warehouse/actions/product-layout";
+import { deleteProductLayoutAction, moveProductLayoutsAction, restoreProductLayoutsAction, setProductLayoutsGroupAction, updateProductColorsAction } from "@/app/warehouse/actions/product-layout";
 import { WarehouseFloorPlan } from "@/app/warehouse/components/WarehouseFloorPlan";
-import { getFloorPlanCanvasRect, getWarehouseFloorPlan, isPositionInsideFloorPlan, PRODUCT_CHIP_HEIGHT, PRODUCT_CHIP_WIDTH } from "@/lib/warehouse/floor-plans";
+import { findNearestValidFloorPlanPosition, getFloorPlanCanvasRect, getWarehouseFloorPlan, isPositionInsideFloorPlan, PRODUCT_CHIP_HEIGHT, PRODUCT_CHIP_WIDTH } from "@/lib/warehouse/floor-plans";
 import { useWarehouseSettings } from "@/app/warehouse/components/WarehouseSettings";
 
 const NAME_VISIBLE_SCALE = 0.3;
@@ -15,17 +15,9 @@ const DETAILS_VISIBLE_SCALE = 0.7;
 const CANVAS_SIZE = 12000;
 const PLAN_GAP = 520;
 const CHIP_COLORS = ["#2563eb", "#059669", "#d97706", "#dc2626", "#7c3aed", "#db2777", "#475569", "#92400e"];
-const COLD_ZONE_RESERVED_FOR_DRY = { x: 0, y: 0, width: 1600, height: 2600 };
 
 type ZonedProduct = CanvasProduct & { zone: string };
 type Point = { x: number; y: number };
-
-function overlapsReservedColdZone(position: { x: number; y: number }) {
-  return position.x < COLD_ZONE_RESERVED_FOR_DRY.x + COLD_ZONE_RESERVED_FOR_DRY.width
-    && position.x + PRODUCT_CHIP_WIDTH > COLD_ZONE_RESERVED_FOR_DRY.x
-    && position.y < COLD_ZONE_RESERVED_FOR_DRY.y + COLD_ZONE_RESERVED_FOR_DRY.height
-    && position.y + PRODUCT_CHIP_HEIGHT > COLD_ZONE_RESERVED_FOR_DRY.y;
-}
 
 function zoneOffsets(branchId: number, zones: readonly string[]) {
   if (zones.includes("cold") && zones.includes("dry")) {
@@ -67,7 +59,10 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onP
   const { spacePressed } = useKeyboard();
   const { settings } = useWarehouseSettings();
   const allProducts = products as ZonedProduct[];
-  const zoneKey = [...new Set(allProducts.map((item) => item.zone ?? zone))].sort((a, b) => a === "cold" ? -1 : b === "cold" ? 1 : a.localeCompare(b)).join("|");
+  const zoneKey = [...new Set([
+    ...allProducts.map((item) => item.zone ?? zone),
+    ...(getWarehouseFloorPlan(branchId, "cold") ? ["cold", "dry"] : []),
+  ])].sort((a, b) => a === "cold" ? -1 : b === "cold" ? 1 : a.localeCompare(b)).join("|");
   const zones = useMemo(() => zoneKey ? zoneKey.split("|") : [zone], [zone, zoneKey]);
   const offsets = useMemo(() => zoneOffsets(branchId, zones), [branchId, zones]);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
@@ -89,6 +84,8 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onP
   const selectionJustEnded = useRef(false);
   const selectedIdsRef = useRef(selectedIds);
   const draggingIdsRef = useRef<number[]>([]);
+  const handledFocusProductId = useRef<number | null>(null);
+  const didInitialFit = useRef(false);
   const middlePanStart = useRef<{ x: number; y: number; positionX: number; positionY: number } | null>(null);
   const overview = scale < NAME_VISIBLE_SCALE;
   const showDetails = scale >= DETAILS_VISIBLE_SCALE;
@@ -101,6 +98,19 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onP
     const offset = offsets.get(item.zone) ?? { x: 0, y: 0 };
     return { x: item.x + offset.x, y: item.y + offset.y };
   }, [offsets]);
+  const resolveDropZone = useCallback((world: Point): string | null => {
+    const candidateZones = [...zones].sort((first, second) => first === "cold" ? -1 : second === "cold" ? 1 : 0);
+    for (const candidateZone of candidateZones) {
+      const floorPlan = getWarehouseFloorPlan(branchId, candidateZone);
+      const offset = offsets.get(candidateZone) ?? { x: 0, y: 0 };
+      if (!floorPlan) return candidateZone;
+      const rect = getFloorPlanCanvasRect(floorPlan);
+      const center = { x: world.x + PRODUCT_CHIP_WIDTH / 2, y: world.y + PRODUCT_CHIP_HEIGHT / 2 };
+      if (center.x >= rect.x + offset.x && center.x <= rect.x + offset.x + rect.width
+        && center.y >= rect.y + offset.y && center.y <= rect.y + offset.y + rect.height) return candidateZone;
+    }
+    return null;
+  }, [branchId, offsets, zones]);
   const worldPositions = useMemo(() => new Map(allProducts.map((item) => [item.productId, worldPosition(item)])), [allProducts, worldPosition]);
   const sameZoneSelection = useCallback((productId: number, shift: boolean) => {
     const product = allProducts.find((item) => item.productId === productId);
@@ -134,20 +144,17 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onP
   const selectedZone = selectedProducts[0]?.zone;
   const canPlace = useCallback((next: ZonedProduct[], ids: readonly number[]) => next.filter((item) => ids.includes(item.productId)).every((item) => {
     const plan = getWarehouseFloorPlan(branchId, item.zone);
-    if (item.zone === "dry" && getWarehouseFloorPlan(branchId, "cold") && overlapsReservedColdZone(item)) return false;
     return !plan || isPositionInsideFloorPlan(plan, item);
   }), [branchId]);
-  const persistPositions = useCallback((next: ZonedProduct[], ids: number[]) => Promise.all(zones.map((targetZone) => {
-    const positions = next.filter((item) => item.zone === targetZone && ids.includes(item.productId)).map(({ productId, x, y }) => ({ productId, x, y }));
-    return positions.length ? updateProductPositionsAction({ branchId, zone: targetZone, positions }) : Promise.resolve({ ok: true });
-  })).then((results) => results.every((item) => item.ok)), [branchId, zones]);
+  const persistPositions = useCallback((next: ZonedProduct[], ids: number[]) => moveProductLayoutsAction({
+    branchId,
+    products: next.filter((item) => ids.includes(item.productId)).map(({ productId, zone: targetZone, x, y }) => ({ productId, zone: targetZone, x, y })),
+  }).then((result) => result.ok), [branchId]);
   const updatePositions = useCallback((next: ZonedProduct[], ids: number[]) => {
-    const crossesColdZone = next.some((item) => ids.includes(item.productId) && item.zone === "dry" && getWarehouseFloorPlan(branchId, "cold") && overlapsReservedColdZone(item));
-    if (crossesColdZone) { setNotice("Không thể đưa chip Kho Khô vào phạm vi Kho Đông."); return; }
     if (!canPlace(next, ids)) { setNotice("Vị trí này nằm trong khu vực không được đặt chip."); return; }
     saveUndo(allProducts); onProductsChange(next);
     void trackMutation(persistPositions(next, ids)).then((ok) => { if (!ok) { onProductsChange(allProducts); setNotice("Không thể lưu vị trí chip."); } });
-  }, [allProducts, branchId, canPlace, onProductsChange, persistPositions, saveUndo, trackMutation]);
+  }, [allProducts, canPlace, onProductsChange, persistPositions, saveUndo, trackMutation]);
   const arrange = useCallback((kind: "vertical" | "horizontal" | "grid") => {
     if (selectedProducts.length < 2 || !selectedZone) return;
     const ordered = [...selectedProducts].sort((a, b) => a.y - b.y || a.x - b.x);
@@ -196,15 +203,30 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onP
     const factor = Math.max(0.2, Math.min(0.65, Math.min((viewport.width - 96) / (right - left), (viewport.height - 96) / (bottom - top))));
     transformRef.current.setTransform(viewport.width / 2 - (left + right) / 2 * factor, viewport.height / 2 - (top + bottom) / 2 * factor, factor, duration);
   }, [branchId, offsets, zones]);
-  useEffect(() => { const frame = requestAnimationFrame(() => fitAll(0)); return () => cancelAnimationFrame(frame); }, [fitAll]);
+  useEffect(() => {
+    if (didInitialFit.current) return;
+    didInitialFit.current = true;
+    const frame = requestAnimationFrame(() => fitAll(0));
+    return () => cancelAnimationFrame(frame);
+  }, [fitAll]);
   useEffect(() => { undoHistory.current = []; setUndoCount(0); }, [branchId, zone]);
   useEffect(() => { if (!notice) return; const timer = window.setTimeout(() => setNotice(null), 2600); return () => window.clearTimeout(timer); }, [notice]);
   useEffect(() => { if (!onRegisterCenterPosition) return; onRegisterCenterPosition(() => ({ x: 400, y: 250 })); return () => onRegisterCenterPosition(null); }, [onRegisterCenterPosition]);
-  useEffect(() => { if (focusProductId == null) return; const item = allProducts.find((product) => product.productId === focusProductId); if (!item || !transformRef.current || !canvasRef.current) return; const world = worldPosition(item); const rect = canvasRef.current.getBoundingClientRect(); const current = transformRef.current.instance.transformState; transformRef.current.setTransform(rect.width / 2 - (world.x + PRODUCT_CHIP_WIDTH / 2) * current.scale, rect.height / 2 - (world.y + PRODUCT_CHIP_HEIGHT / 2) * current.scale, Math.max(current.scale, NAME_VISIBLE_SCALE), 250); }, [allProducts, focusProductId, worldPosition]);
+  useEffect(() => {
+    if (focusProductId == null) { handledFocusProductId.current = null; return; }
+    if (handledFocusProductId.current === focusProductId) return;
+    const item = allProducts.find((product) => product.productId === focusProductId);
+    if (!item || !transformRef.current || !canvasRef.current) return;
+    const world = worldPosition(item);
+    const rect = canvasRef.current.getBoundingClientRect();
+    const current = transformRef.current.instance.transformState;
+    handledFocusProductId.current = focusProductId;
+    transformRef.current.setTransform(rect.width / 2 - (world.x + PRODUCT_CHIP_WIDTH / 2) * current.scale, rect.height / 2 - (world.y + PRODUCT_CHIP_HEIGHT / 2) * current.scale, Math.max(current.scale, NAME_VISIBLE_SCALE), 250);
+  }, [allProducts, focusProductId, worldPosition]);
   useEffect(() => { const listener = (event: KeyboardEvent) => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") { event.preventDefault(); undo(); return; } if ((event.key === "Delete" || event.key === "Backspace") && selectedIds.length) { event.preventDefault(); removeSelected(); } }; window.addEventListener("keydown", listener); return () => window.removeEventListener("keydown", listener); }, [removeSelected, selectedIds.length, undo]);
   const visibleProducts = useMemo(() => allProducts, [allProducts]);
 
-  return <DndContext sensors={sensors} onDragStart={(event: DragStartEvent) => {
+  return <DndContext sensors={sensors} autoScroll={false} onDragStart={(event: DragStartEvent) => {
     if (overview || spacePressed) return;
     const item = allProducts.find((product) => product.productId === Number(event.active.id));
     if (!item) return;
@@ -227,7 +249,18 @@ export function CanvasViewport({ products, branchId, zone, onProductsChange, onP
     if (!active) return;
     const ids = moving.length ? moving : [id];
     const currentScale = transformRef.current?.instance.transformState.scale ?? 1;
-    const next = allProducts.map((item) => ids.includes(item.productId) ? { ...item, x: item.x + event.delta.x / currentScale, y: item.y + event.delta.y / currentScale } : item);
+    const rawDelta = { x: event.delta.x / currentScale, y: event.delta.y / currentScale };
+    const activeWorld = worldPosition(active);
+    const targetZone = resolveDropZone({ x: activeWorld.x + rawDelta.x, y: activeWorld.y + rawDelta.y });
+    if (!targetZone) { setNotice("Hãy thả chip vào phạm vi hợp lệ của một kho."); return; }
+    const targetOffset = offsets.get(targetZone) ?? { x: 0, y: 0 };
+    const targetPlan = getWarehouseFloorPlan(branchId, targetZone);
+    const rawTargetPosition = { x: activeWorld.x + rawDelta.x - targetOffset.x, y: activeWorld.y + rawDelta.y - targetOffset.y };
+    const targetPosition = targetPlan ? findNearestValidFloorPlanPosition(targetPlan, rawTargetPosition) : rawTargetPosition;
+    const delta = { x: targetPosition.x + targetOffset.x - activeWorld.x, y: targetPosition.y + targetOffset.y - activeWorld.y };
+    const next = allProducts.map((item) => ids.includes(item.productId)
+      ? { ...item, zone: targetZone, x: worldPosition(item).x + delta.x - targetOffset.x, y: worldPosition(item).y + delta.y - targetOffset.y }
+      : item);
     updatePositions(next, ids);
   }}>
     <TransformWrapper ref={transformRef} minScale={0.2} maxScale={4} limitToBounds={false} centerZoomedOut={false} wheel={{ activationKeys: ["Control"], step: 0.02 }} panning={{ disabled: !spacePressed, excluded: ["product-chip", "canvas-control"] }} doubleClick={{ disabled: true }} onTransformed={(_, state) => setScale((current) => Math.abs(current - state.scale) > 0.01 ? state.scale : current)}>

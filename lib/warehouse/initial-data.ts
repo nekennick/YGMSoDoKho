@@ -3,6 +3,8 @@ import { getProductCatalogService } from "@/lib/warehouse/catalog-service";
 import { mergeCatalogAndLayouts, type WarehouseInitialData } from "@/lib/product-catalog/merge";
 import { findNearestValidFloorPlanPosition, getWarehouseFloorPlan, isPositionInsideFloorPlan } from "@/lib/warehouse/floor-plans";
 import { WAREHOUSES } from "@/lib/warehouse/branches";
+import { findWarehouseZoneMarker } from "@/lib/warehouse/zone-marker-repository";
+import { DEFAULT_DRY_ZONE_MARKER, DRY_ZONE_MARKER_KEY, DRY_ZONE_MARKER_PRODUCT_ID } from "@/lib/warehouse/zone-markers";
 
 export type WarehouseDataResult =
   | { ok: true; data: WarehouseInitialData }
@@ -17,11 +19,17 @@ export async function loadWarehouseInitialData(branchId: number, zone: string): 
     return { ok: false, code: "CONFIG", message: "Thiếu hoặc sai biến môi trường KiotViet trên Vercel." };
   }
   try {
-    const [catalogResult, layoutResult] = await Promise.allSettled([catalogService.listProducts(), listProductLayoutsByBranch(branchId)]);
+    const [catalogResult, layoutResult, zoneMarkerResult] = await Promise.allSettled([
+      catalogService.listProducts(),
+      listProductLayoutsByBranch(branchId),
+      branchId === WAREHOUSES.caoLanh.id
+        ? findWarehouseZoneMarker(branchId, "dry", DRY_ZONE_MARKER_KEY)
+        : Promise.resolve(null),
+    ]);
     if (catalogResult.status === "rejected") throw Object.assign(catalogResult.reason, { source: "KIOTVIET" });
     if (layoutResult.status === "rejected") throw Object.assign(layoutResult.reason, { source: "DATABASE" });
     const products = catalogResult.value;
-    const branchLayouts = layoutResult.value;
+    const branchLayouts = layoutResult.value.filter((layout) => layout.productId !== DRY_ZONE_MARKER_PRODUCT_ID);
     const visibleZones = branchId === WAREHOUSES.caoLanh.id ? new Set(["cold", "dry"]) : new Set([zone]);
     const visibleLayouts = branchLayouts
       .filter((layout) => visibleZones.has(layout.zone))
@@ -34,6 +42,9 @@ export async function loadWarehouseInitialData(branchId: number, zone: string): 
     const unavailableProductIds = new Set(branchLayouts.map((layout) => layout.productId));
     const data = mergeCatalogAndLayouts(products, visibleLayouts, unavailableProductIds);
     const zoneByProductId = new Map(visibleLayouts.map((layout) => [layout.productId, layout.zone]));
+    const dryZoneMarker = branchId === WAREHOUSES.caoLanh.id
+      ? (zoneMarkerResult.status === "fulfilled" ? zoneMarkerResult.value ?? DEFAULT_DRY_ZONE_MARKER : DEFAULT_DRY_ZONE_MARKER)
+      : null;
     return {
       ok: true,
       data: {
@@ -42,6 +53,7 @@ export async function loadWarehouseInitialData(branchId: number, zone: string): 
           ...product,
           zone: zoneByProductId.get(product.productId) ?? zone,
         })),
+        dryZoneMarker,
       },
     };
   } catch (error) {

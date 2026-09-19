@@ -6,6 +6,7 @@ import { CanvasViewport } from "@/app/warehouse/components/CanvasViewport";
 import { AddProductDialog } from "@/app/warehouse/components/AddProductDialog";
 import { useWarehouseSettings } from "@/app/warehouse/components/WarehouseSettings";
 import type { CanvasProduct } from "@/lib/product-catalog/merge";
+import type { ZoneMarkerLayout } from "@/lib/warehouse/zone-markers";
 
 export function WarehouseWorkspace({ result, branchId, zone }: { result: WarehouseDataResult; branchId: number; zone: string }) {
   const { settings } = useWarehouseSettings();
@@ -13,6 +14,7 @@ export function WarehouseWorkspace({ result, branchId, zone }: { result: Warehou
   const [availableProducts, setAvailableProducts] = useState(result.ok ? result.data.availableProducts : []);
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [focusProductId, setFocusProductId] = useState<number | null>(null);
+  const [dryZoneMarker, setDryZoneMarker] = useState<ZoneMarkerLayout | null>(result.ok ? result.data.dryZoneMarker : null);
   const centerPositionRef = useRef<(() => { x: number; y: number }) | null>(null);
   const registerCenterPosition = useCallback((getter: (() => { x: number; y: number }) | null) => {
     centerPositionRef.current = getter;
@@ -21,9 +23,11 @@ export function WarehouseWorkspace({ result, branchId, zone }: { result: Warehou
     if (result.ok) {
       setCanvasProducts(result.data.canvasProducts);
       setAvailableProducts(result.data.availableProducts);
+      setDryZoneMarker(result.data.dryZoneMarker);
     } else {
       setCanvasProducts([]);
       setAvailableProducts([]);
+      setDryZoneMarker(null);
     }
   }, [branchId, zone, result]);
   const restoreDeletedProducts = useCallback((deletedProducts: CanvasProduct[]) => {
@@ -78,7 +82,7 @@ export function WarehouseWorkspace({ result, branchId, zone }: { result: Warehou
         <span className="text-slate-500">{availableProducts.length} sản phẩm có thể thêm</span>
       </div>
       <section className="relative min-h-0 flex-1 overflow-hidden">
-        <CanvasViewport products={canvasProducts} branchId={branchId} zone={zone} onProductsChange={setCanvasProducts} onProductsDeleted={restoreDeletedProducts} onProductsRestored={removeRestoredProductsFromAvailable} onRequestAdd={() => setAddDialogOpen(true)} onRegisterCenterPosition={registerCenterPosition} focusProductId={focusProductId} />
+        <CanvasViewport products={canvasProducts} branchId={branchId} zone={zone} dryZoneMarker={dryZoneMarker} onDryZoneMarkerChange={setDryZoneMarker} onProductsChange={setCanvasProducts} onProductsDeleted={restoreDeletedProducts} onProductsRestored={removeRestoredProductsFromAvailable} onRequestAdd={() => setAddDialogOpen(true)} onRegisterCenterPosition={registerCenterPosition} focusProductId={focusProductId} />
       </section>
     </main>
   );

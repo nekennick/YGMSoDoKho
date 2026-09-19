@@ -1,5 +1,6 @@
 import type { ExternalProduct } from "@/lib/product-catalog/contracts";
 import type { ProductLayoutRecord } from "@/lib/product-layout/types";
+import type { ZoneMarkerLayout } from "@/lib/warehouse/zone-markers";
 
 export type CanvasProduct = {
   productId: number;
@@ -23,6 +24,7 @@ export type WarehouseInitialData = {
   canvasProducts: CanvasProduct[];
   availableProducts: ProductOption[];
   orphanLayoutProductIds: number[];
+  dryZoneMarker: ZoneMarkerLayout | null;
 };
 
 export function mergeCatalogAndLayouts(
@@ -61,5 +63,5 @@ export function mergeCatalogAndLayouts(
     .filter((layout) => !knownProductIds.has(layout.productId))
     .map((layout) => layout.productId);
 
-  return { canvasProducts, availableProducts, orphanLayoutProductIds };
+  return { canvasProducts, availableProducts, orphanLayoutProductIds, dryZoneMarker: null };
 }

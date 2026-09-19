@@ -25,14 +25,16 @@ function traceUsableArea(
   context.closePath();
 }
 
-function drawFloorPlan(canvas: HTMLCanvasElement, plan: WarehouseFloorPlanConfig, showGrid: boolean) {
+function drawFloorPlan(canvas: HTMLCanvasElement, plan: WarehouseFloorPlanConfig, showGrid: boolean, maxPixels: number) {
   const planRect = getFloorPlanCanvasRect(plan);
   const usableRect = getFloorPlanUsableRect(plan);
   const context = canvas.getContext("2d");
   if (!context) return;
 
-  canvas.width = planRect.width;
-  canvas.height = planRect.height;
+  const renderScale = Math.min(1, Math.sqrt(maxPixels / (planRect.width * planRect.height)));
+  canvas.width = Math.max(1, Math.round(planRect.width * renderScale));
+  canvas.height = Math.max(1, Math.round(planRect.height * renderScale));
+  context.setTransform(renderScale, 0, 0, renderScale, 0, 0);
   const excludedArea = plan.notchedBoundary ? plan.excludedAreas[0] : undefined;
 
   context.fillStyle = "#e2e8f0";
@@ -210,7 +212,8 @@ export const WarehouseFloorPlan = memo(function WarehouseFloorPlan({ plan, offse
   const chipHeightMeters = PRODUCT_CHIP_HEIGHT / plan.pixelsPerMeter;
 
   useEffect(() => {
-    if (canvasRef.current) drawFloorPlan(canvasRef.current, plan, settings.showFloorGrid);
+    const smallScreen = window.matchMedia("(max-width: 1024px)").matches;
+    if (canvasRef.current) drawFloorPlan(canvasRef.current, plan, settings.showFloorGrid, smallScreen ? 4_000_000 : Number.POSITIVE_INFINITY);
   }, [plan, settings.showFloorGrid]);
 
   return (
@@ -240,7 +243,6 @@ export const WarehouseFloorPlan = memo(function WarehouseFloorPlan({ plan, offse
         role="img"
         style={{
           backfaceVisibility: "hidden",
-          transform: "translateZ(0)",
         }}
       />
 

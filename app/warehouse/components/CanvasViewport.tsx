@@ -64,7 +64,7 @@ const ZoneMarkerStrip = memo(function ZoneMarkerStrip({ layout, scale, disabled,
   const dy = isDragging ? (transform?.y ?? 0) / scale : 0;
   return (
     <div ref={setNodeRef} {...listeners} {...attributes} className={`zone-marker-strip pointer-events-none absolute ${disabled ? "cursor-default" : "cursor-grab active:cursor-grabbing"}`}
-      style={{ left: layout.x, top: layout.y, width: DRY_ZONE_MARKER_WIDTH, height: DRY_ZONE_MARKER_SPACING * (DRY_ZONE_MARKER_LABELS.length - 1) + DRY_ZONE_MARKER_HEIGHT, transform: `translate3d(${dx}px, ${dy}px, 0)`, zIndex: layout.locked ? 0 : 10 }}
+      style={{ left: layout.x, top: layout.y, width: DRY_ZONE_MARKER_WIDTH, height: DRY_ZONE_MARKER_SPACING * (DRY_ZONE_MARKER_LABELS.length - 1) + DRY_ZONE_MARKER_HEIGHT, transform: isDragging ? `translate(${dx}px, ${dy}px)` : undefined, zIndex: layout.locked ? 0 : 10 }}
       onContextMenu={onContextMenu} title={layout.locked ? "Chuột phải để mở khóa dãy phân khu" : "Kéo để canh dãy phân khu. Chuột phải để cố định xuống nền"}>
       {DRY_ZONE_MARKER_LABELS.map((label, index) => (
         <div key={label} className="pointer-events-auto absolute left-0 h-[80px] w-full touch-none" style={{ top: index * DRY_ZONE_MARKER_SPACING }}>

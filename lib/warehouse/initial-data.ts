@@ -4,7 +4,7 @@ import { mergeCatalogAndLayouts, type WarehouseInitialData } from "@/lib/product
 import { findNearestValidFloorPlanPosition, getWarehouseFloorPlan, isPositionInsideFloorPlan } from "@/lib/warehouse/floor-plans";
 import { WAREHOUSES } from "@/lib/warehouse/branches";
 import { findWarehouseZoneMarker } from "@/lib/warehouse/zone-marker-repository";
-import { DEFAULT_DRY_ZONE_MARKER, DRY_ZONE_MARKER_KEY, DRY_ZONE_MARKER_PRODUCT_ID } from "@/lib/warehouse/zone-markers";
+import { DEFAULT_DRY_TOP_ZONE_MARKERS, DEFAULT_DRY_ZONE_MARKER, DRY_TOP_ZONE_MARKER_LABELS, DRY_ZONE_MARKER_KEY, getDryTopZoneMarkerKey, SYSTEM_MARKER_PRODUCT_IDS } from "@/lib/warehouse/zone-markers";
 
 export type WarehouseDataResult =
   | { ok: true; data: WarehouseInitialData }
@@ -19,17 +19,20 @@ export async function loadWarehouseInitialData(branchId: number, zone: string): 
     return { ok: false, code: "CONFIG", message: "Thiếu hoặc sai biến môi trường KiotViet trên Vercel." };
   }
   try {
-    const [catalogResult, layoutResult, zoneMarkerResult] = await Promise.allSettled([
+    const [catalogResult, layoutResult, zoneMarkerResult, ...topZoneMarkerResults] = await Promise.allSettled([
       catalogService.listProducts(),
       listProductLayoutsByBranch(branchId),
       branchId === WAREHOUSES.caoLanh.id
         ? findWarehouseZoneMarker(branchId, "dry", DRY_ZONE_MARKER_KEY)
         : Promise.resolve(null),
+      ...DRY_TOP_ZONE_MARKER_LABELS.map((label) => branchId === WAREHOUSES.caoLanh.id
+        ? findWarehouseZoneMarker(branchId, "dry", getDryTopZoneMarkerKey(label))
+        : Promise.resolve(null)),
     ]);
     if (catalogResult.status === "rejected") throw Object.assign(catalogResult.reason, { source: "KIOTVIET" });
     if (layoutResult.status === "rejected") throw Object.assign(layoutResult.reason, { source: "DATABASE" });
     const products = catalogResult.value;
-    const branchLayouts = layoutResult.value.filter((layout) => layout.productId !== DRY_ZONE_MARKER_PRODUCT_ID);
+    const branchLayouts = layoutResult.value.filter((layout) => !SYSTEM_MARKER_PRODUCT_IDS.includes(layout.productId as typeof SYSTEM_MARKER_PRODUCT_IDS[number]));
     const visibleZones = branchId === WAREHOUSES.caoLanh.id ? new Set(["cold", "dry"]) : new Set([zone]);
     const visibleLayouts = branchLayouts
       .filter((layout) => visibleZones.has(layout.zone))
@@ -45,6 +48,9 @@ export async function loadWarehouseInitialData(branchId: number, zone: string): 
     const dryZoneMarker = branchId === WAREHOUSES.caoLanh.id
       ? (zoneMarkerResult.status === "fulfilled" ? zoneMarkerResult.value ?? DEFAULT_DRY_ZONE_MARKER : DEFAULT_DRY_ZONE_MARKER)
       : null;
+    const dryTopZoneMarkers = branchId === WAREHOUSES.caoLanh.id
+      ? Object.fromEntries(DRY_TOP_ZONE_MARKER_LABELS.map((label, index) => [label, topZoneMarkerResults[index]?.status === "fulfilled" ? topZoneMarkerResults[index].value ?? DEFAULT_DRY_TOP_ZONE_MARKERS[label] : DEFAULT_DRY_TOP_ZONE_MARKERS[label]])) as typeof DEFAULT_DRY_TOP_ZONE_MARKERS
+      : null;
     return {
       ok: true,
       data: {
@@ -54,6 +60,7 @@ export async function loadWarehouseInitialData(branchId: number, zone: string): 
           zone: zoneByProductId.get(product.productId) ?? zone,
         })),
         dryZoneMarker,
+        dryTopZoneMarkers,
       },
     };
   } catch (error) {

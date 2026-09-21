@@ -10,7 +10,7 @@ import { WarehouseFloorPlan } from "@/app/warehouse/components/WarehouseFloorPla
 import { findNearestValidFloorPlanPosition, getFloorPlanCanvasRect, getWarehouseFloorPlan, isPositionInsideFloorPlan, PRODUCT_CHIP_HEIGHT, PRODUCT_CHIP_WIDTH } from "@/lib/warehouse/floor-plans";
 import { useWarehouseSettings } from "@/app/warehouse/components/WarehouseSettings";
 import { saveWarehouseZoneMarkerAction } from "@/app/warehouse/actions/zone-marker";
-import { DRY_ZONE_MARKER_HEIGHT, DRY_ZONE_MARKER_KEY, DRY_ZONE_MARKER_LABELS, DRY_ZONE_MARKER_SPACING, DRY_ZONE_MARKER_WIDTH, type ZoneMarkerLayout } from "@/lib/warehouse/zone-markers";
+import { DRY_TOP_ZONE_MARKER_HEIGHT, DRY_TOP_ZONE_MARKER_LABELS, DRY_ZONE_MARKER_HEIGHT, DRY_ZONE_MARKER_KEY, DRY_ZONE_MARKER_LABELS, DRY_ZONE_MARKER_SPACING, DRY_ZONE_MARKER_WIDTH, getDryTopZoneMarkerKey, type DryTopZoneMarkerLabel, type ZoneMarkerLayout } from "@/lib/warehouse/zone-markers";
 
 const NAME_VISIBLE_SCALE = 0.3;
 const DETAILS_VISIBLE_SCALE = 0.7;
@@ -18,6 +18,8 @@ const CANVAS_SIZE = 12000;
 const PLAN_GAP = 520;
 const CHIP_COLORS = ["#2563eb", "#059669", "#d97706", "#dc2626", "#7c3aed", "#db2777", "#475569", "#92400e"];
 const DRY_ZONE_MARKER_DRAG_ID = "dry-zone-marker-strip";
+const DRY_TOP_ZONE_MARKER_DRAG_ID_PREFIX = "dry-top-zone-marker-";
+const TOP_MARKER_MIN_GAP = 170;
 
 type ZonedProduct = CanvasProduct & { zone: string };
 type Point = { x: number; y: number };
@@ -67,16 +69,29 @@ const ZoneMarkerStrip = memo(function ZoneMarkerStrip({ layout, scale, disabled,
       style={{ left: layout.x, top: layout.y, width: DRY_ZONE_MARKER_WIDTH, height: DRY_ZONE_MARKER_SPACING * (DRY_ZONE_MARKER_LABELS.length - 1) + DRY_ZONE_MARKER_HEIGHT, transform: isDragging ? `translate(${dx}px, ${dy}px)` : undefined, zIndex: layout.locked ? 0 : 10 }}
       onContextMenu={onContextMenu} title={layout.locked ? "Chuột phải để mở khóa dãy phân khu" : "Kéo để canh dãy phân khu. Chuột phải để cố định xuống nền"}>
       {DRY_ZONE_MARKER_LABELS.map((label, index) => (
-        <div key={label} className="pointer-events-auto absolute left-0 h-[80px] w-full touch-none" style={{ top: index * DRY_ZONE_MARKER_SPACING }}>
+        <div key={label} className="pointer-events-none absolute left-0 h-[80px] w-full touch-none" style={{ top: index * DRY_ZONE_MARKER_SPACING }}>
           <div className="absolute left-0 top-[38px] h-px w-[1120px] bg-amber-400 shadow-[0_0_0_1px_rgba(255,255,255,0.5)]" />
-          <span className="absolute left-[1160px] top-0 flex h-[76px] w-[140px] items-center justify-center rounded-md border-2 border-amber-600 bg-amber-300/95 text-[56px] font-black leading-none text-amber-950 shadow-sm">{label}</span>
+          <span className="pointer-events-auto absolute left-[1160px] top-0 flex h-[76px] w-[140px] items-center justify-center rounded-md border-2 border-amber-600 bg-amber-300/95 text-[56px] font-black leading-none text-amber-950 shadow-sm">{label}</span>
         </div>
       ))}
     </div>
   );
 });
 
-export function CanvasViewport({ products, branchId, zone, dryZoneMarker, onDryZoneMarkerChange, onProductsChange, onProductsDeleted, onProductsRestored, onRequestAdd, onRegisterCenterPosition, focusProductId }: { products: CanvasProduct[]; branchId: number; zone: string; dryZoneMarker: ZoneMarkerLayout | null; onDryZoneMarkerChange: (layout: ZoneMarkerLayout) => void; onProductsChange: (products: CanvasProduct[]) => void; onProductsDeleted?: (products: CanvasProduct[]) => void; onProductsRestored?: (products: CanvasProduct[]) => void; onRequestAdd: () => void; onRegisterCenterPosition?: (getter: (() => Point) | null) => void; focusProductId?: number | null }) {
+const TopZoneMarker = memo(function TopZoneMarker({ label, layout, scale, disabled, onContextMenu }: { label: DryTopZoneMarkerLabel; layout: ZoneMarkerLayout; scale: number; disabled: boolean; onContextMenu: (event: React.MouseEvent) => void }) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: `${DRY_TOP_ZONE_MARKER_DRAG_ID_PREFIX}${label}`, disabled });
+  const dx = isDragging ? (transform?.x ?? 0) / scale : 0;
+  return (
+    <div ref={setNodeRef} {...listeners} {...attributes} className={`zone-marker-strip pointer-events-none absolute w-[140px] touch-none ${disabled ? "cursor-default" : "cursor-ew-resize active:cursor-grabbing"}`}
+      style={{ left: layout.x, top: layout.y, height: DRY_TOP_ZONE_MARKER_HEIGHT, transform: isDragging ? `translate(${dx}px, 0)` : undefined, zIndex: layout.locked ? 0 : 10 }}
+      onContextMenu={onContextMenu}>
+      <div className="pointer-events-none absolute left-[69px] top-[118px] h-[6400px] w-[2px] bg-amber-600 shadow-[0_0_0_1px_rgba(120,53,15,0.45)]" />
+      <span className="pointer-events-auto absolute left-0 top-0 flex h-[76px] w-[140px] items-center justify-center rounded-md border-2 border-amber-700 bg-amber-300/95 text-[56px] font-black leading-none text-amber-950 shadow-md">{label}</span>
+    </div>
+  );
+});
+
+export function CanvasViewport({ products, branchId, zone, dryZoneMarker, onDryZoneMarkerChange, dryTopZoneMarkers, onDryTopZoneMarkersChange, onProductsChange, onProductsDeleted, onProductsRestored, onRequestAdd, onRegisterCenterPosition, focusProductId }: { products: CanvasProduct[]; branchId: number; zone: string; dryZoneMarker: ZoneMarkerLayout | null; onDryZoneMarkerChange: (layout: ZoneMarkerLayout) => void; dryTopZoneMarkers: Record<DryTopZoneMarkerLabel, ZoneMarkerLayout> | null; onDryTopZoneMarkersChange: (layouts: Record<DryTopZoneMarkerLabel, ZoneMarkerLayout>) => void; onProductsChange: (products: CanvasProduct[]) => void; onProductsDeleted?: (products: CanvasProduct[]) => void; onProductsRestored?: (products: CanvasProduct[]) => void; onRequestAdd: () => void; onRegisterCenterPosition?: (getter: (() => Point) | null) => void; focusProductId?: number | null }) {
   const { spacePressed } = useKeyboard();
   const { settings } = useWarehouseSettings();
   const allProducts = products as ZonedProduct[];
@@ -90,7 +105,7 @@ export function CanvasViewport({ products, branchId, zone, dryZoneMarker, onDryZ
   const [scale, setScale] = useState(0.3);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; productId: number } | null>(null);
-  const [zoneMarkerContextMenu, setZoneMarkerContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const [zoneMarkerContextMenu, setZoneMarkerContextMenu] = useState<{ x: number; y: number; marker: "side" | DryTopZoneMarkerLabel } | null>(null);
   const [query, setQuery] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
   const [undoCount, setUndoCount] = useState(0);
@@ -109,7 +124,7 @@ export function CanvasViewport({ products, branchId, zone, dryZoneMarker, onDryZ
   const handledFocusProductId = useRef<number | null>(null);
   const didInitialFit = useRef(false);
   const middlePanStart = useRef<{ x: number; y: number; positionX: number; positionY: number } | null>(null);
-  const markerDragActive = useRef(false);
+  const markerDragActive = useRef<"side" | DryTopZoneMarkerLabel | null>(null);
   const overview = scale < NAME_VISIBLE_SCALE;
   const showDetails = scale >= DETAILS_VISIBLE_SCALE;
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
@@ -181,6 +196,18 @@ export function CanvasViewport({ products, branchId, zone, dryZoneMarker, onDryZ
       }
     });
   }, [branchId, dryZoneMarker, onDryZoneMarkerChange, trackMutation]);
+  const updateDryTopZoneMarker = useCallback((label: DryTopZoneMarkerLabel, next: ZoneMarkerLayout) => {
+    if (!dryTopZoneMarkers) return;
+    const before = dryTopZoneMarkers;
+    onDryTopZoneMarkersChange({ ...dryTopZoneMarkers, [label]: next });
+    setZoneMarkerContextMenu(null);
+    void trackMutation(saveWarehouseZoneMarkerAction({ branchId, zone: "dry", key: getDryTopZoneMarkerKey(label), ...next })).then((result) => {
+      if (!result.ok) {
+        onDryTopZoneMarkersChange(before);
+        setNotice(result.message);
+      }
+    });
+  }, [branchId, dryTopZoneMarkers, onDryTopZoneMarkersChange, trackMutation]);
   const canPlace = useCallback((next: ZonedProduct[], ids: readonly number[]) => next.filter((item) => ids.includes(item.productId)).every((item) => {
     const plan = getWarehouseFloorPlan(branchId, item.zone);
     return !plan || isPositionInsideFloorPlan(plan, item);
@@ -266,8 +293,10 @@ export function CanvasViewport({ products, branchId, zone, dryZoneMarker, onDryZ
   const visibleProducts = useMemo(() => allProducts, [allProducts]);
 
   return <DndContext sensors={sensors} autoScroll={false} onDragStart={(event: DragStartEvent) => {
-    if (event.active.id === DRY_ZONE_MARKER_DRAG_ID) {
-      markerDragActive.current = true;
+    const topLabel = typeof event.active.id === "string" && event.active.id.startsWith(DRY_TOP_ZONE_MARKER_DRAG_ID_PREFIX)
+      ? event.active.id.slice(DRY_TOP_ZONE_MARKER_DRAG_ID_PREFIX.length) as DryTopZoneMarkerLabel : null;
+    if (event.active.id === DRY_ZONE_MARKER_DRAG_ID || (topLabel && DRY_TOP_ZONE_MARKER_LABELS.includes(topLabel))) {
+      markerDragActive.current = event.active.id === DRY_ZONE_MARKER_DRAG_ID ? "side" : topLabel;
       setContextMenu(null);
       return;
     }
@@ -282,16 +311,33 @@ export function CanvasViewport({ products, branchId, zone, dryZoneMarker, onDryZ
     setSelectedIds(ids);
     setDragPreview({ ids, x: 0, y: 0 });
   }} onDragMove={(event: DragMoveEvent) => {
-    if (markerDragActive.current || event.active.id === DRY_ZONE_MARKER_DRAG_ID) return;
+    if (markerDragActive.current || event.active.id === DRY_ZONE_MARKER_DRAG_ID || (typeof event.active.id === "string" && event.active.id.startsWith(DRY_TOP_ZONE_MARKER_DRAG_ID_PREFIX))) return;
     const currentScale = transformRef.current?.instance.transformState.scale ?? 1;
     if (draggingIdsRef.current.length) setDragPreview({ ids: draggingIdsRef.current, x: event.delta.x / currentScale, y: event.delta.y / currentScale });
-  }} onDragCancel={() => { markerDragActive.current = false; draggingIdsRef.current = []; setDragPreview(null); }} onDragEnd={(event: DragEndEvent) => {
-    if (markerDragActive.current || event.active.id === DRY_ZONE_MARKER_DRAG_ID) {
-      markerDragActive.current = false;
-      if (!dryZoneMarker || dryZoneMarker.locked || overview) return;
+  }} onDragCancel={() => { markerDragActive.current = null; draggingIdsRef.current = []; setDragPreview(null); }} onDragEnd={(event: DragEndEvent) => {
+    const topLabel = typeof event.active.id === "string" && event.active.id.startsWith(DRY_TOP_ZONE_MARKER_DRAG_ID_PREFIX)
+      ? event.active.id.slice(DRY_TOP_ZONE_MARKER_DRAG_ID_PREFIX.length) as DryTopZoneMarkerLabel : null;
+    const activeMarker = markerDragActive.current ?? (event.active.id === DRY_ZONE_MARKER_DRAG_ID ? "side" : topLabel && DRY_TOP_ZONE_MARKER_LABELS.includes(topLabel) ? topLabel : null);
+    if (activeMarker) {
+      markerDragActive.current = null;
+      const marker = activeMarker === "side" ? dryZoneMarker : dryTopZoneMarkers?.[activeMarker];
+      if (!marker || marker.locked || overview) return;
       const currentScale = transformRef.current?.instance.transformState.scale ?? 1;
-      const nextPosition = clampMarkerPosition({ x: dryZoneMarker.x + event.delta.x / currentScale, y: dryZoneMarker.y + event.delta.y / currentScale });
-      if (nextPosition.x !== dryZoneMarker.x || nextPosition.y !== dryZoneMarker.y) updateDryZoneMarker({ ...dryZoneMarker, ...nextPosition });
+      const rawPosition = clampMarkerPosition({ x: marker.x + event.delta.x / currentScale, y: marker.y + event.delta.y / currentScale });
+      const nextPosition = activeMarker === "side" ? rawPosition : {
+        x: Math.max(
+          DRY_TOP_ZONE_MARKER_LABELS.indexOf(activeMarker) > 0 ? (dryTopZoneMarkers?.[DRY_TOP_ZONE_MARKER_LABELS[DRY_TOP_ZONE_MARKER_LABELS.indexOf(activeMarker) - 1]]?.x ?? -Infinity) + TOP_MARKER_MIN_GAP : -Infinity,
+          Math.min(
+            DRY_TOP_ZONE_MARKER_LABELS.indexOf(activeMarker) < DRY_TOP_ZONE_MARKER_LABELS.length - 1 ? (dryTopZoneMarkers?.[DRY_TOP_ZONE_MARKER_LABELS[DRY_TOP_ZONE_MARKER_LABELS.indexOf(activeMarker) + 1]]?.x ?? Infinity) - TOP_MARKER_MIN_GAP : Infinity,
+            rawPosition.x,
+          ),
+        ),
+        y: marker.y,
+      };
+      if (nextPosition.x !== marker.x || nextPosition.y !== marker.y) {
+        if (activeMarker === "side") updateDryZoneMarker({ ...marker, ...nextPosition });
+        else updateDryTopZoneMarker(activeMarker, { ...marker, ...nextPosition });
+      }
       return;
     }
     const moving = draggingIdsRef.current;
@@ -336,7 +382,7 @@ export function CanvasViewport({ products, branchId, zone, dryZoneMarker, onDryZ
           return;
         }
         if (!selectionStart.current) return; const rect = event.currentTarget.getBoundingClientRect(); const end = { x: event.clientX - rect.left, y: event.clientY - rect.top }; const width = Math.abs(end.x - selectionStart.current.x); const height = Math.abs(end.y - selectionStart.current.y); if (width > 3 || height > 3) selectionDragged.current = true; setSelectionBox({ x: Math.min(selectionStart.current.x, end.x), y: Math.min(selectionStart.current.y, end.y), width, height });
-      }} onPointerUp={() => { middlePanStart.current = null; selectionJustEnded.current = selectionDragged.current; if (selectionBox && selectionDragged.current && canvasRef.current) { const canvas = canvasRef.current.getBoundingClientRect(); const ids = [...canvasRef.current.querySelectorAll<HTMLElement>(".product-chip")].filter((node) => { const rect = node.getBoundingClientRect(); const left = rect.left - canvas.left; const top = rect.top - canvas.top; return left < selectionBox.x + selectionBox.width && left + rect.width > selectionBox.x && top < selectionBox.y + selectionBox.height && top + rect.height > selectionBox.y; }).map((node) => Number(node.dataset.productId)); const first = allProducts.find((item) => item.productId === ids[0]); setSelectedIds(first ? ids.filter((id) => allProducts.find((item) => item.productId === id)?.zone === first.zone) : []); } selectionStart.current = null; setSelectionBox(null); }} onPointerCancel={() => { middlePanStart.current = null; markerDragActive.current = false; selectionStart.current = null; selectionDragged.current = false; selectionJustEnded.current = false; setSelectionBox(null); }} onClick={(event) => { const target = event.target as HTMLElement; if (!target.closest(".product-chip") && !target.closest(".zone-marker-strip") && !target.closest(".canvas-control")) { setContextMenu(null); setZoneMarkerContextMenu(null); if (!selectionJustEnded.current) setSelectedIds([]); } selectionJustEnded.current = false; }} onContextMenu={(event) => { const target = event.target as HTMLElement; if (!target.closest(".product-chip") && !target.closest(".zone-marker-strip")) { event.preventDefault(); onRequestAdd(); } }}>
+      }} onPointerUp={() => { middlePanStart.current = null; selectionJustEnded.current = selectionDragged.current; if (selectionBox && selectionDragged.current && canvasRef.current) { const canvas = canvasRef.current.getBoundingClientRect(); const ids = [...canvasRef.current.querySelectorAll<HTMLElement>(".product-chip")].filter((node) => { const rect = node.getBoundingClientRect(); const left = rect.left - canvas.left; const top = rect.top - canvas.top; return left < selectionBox.x + selectionBox.width && left + rect.width > selectionBox.x && top < selectionBox.y + selectionBox.height && top + rect.height > selectionBox.y; }).map((node) => Number(node.dataset.productId)); const first = allProducts.find((item) => item.productId === ids[0]); setSelectedIds(first ? ids.filter((id) => allProducts.find((item) => item.productId === id)?.zone === first.zone) : []); } selectionStart.current = null; setSelectionBox(null); }} onPointerCancel={() => { middlePanStart.current = null; markerDragActive.current = null; selectionStart.current = null; selectionDragged.current = false; selectionJustEnded.current = false; setSelectionBox(null); }} onClick={(event) => { const target = event.target as HTMLElement; if (!target.closest(".product-chip") && !target.closest(".zone-marker-strip") && !target.closest(".canvas-control")) { setContextMenu(null); setZoneMarkerContextMenu(null); if (!selectionJustEnded.current) setSelectedIds([]); } selectionJustEnded.current = false; }} onContextMenu={(event) => { const target = event.target as HTMLElement; if (!target.closest(".product-chip") && !target.closest(".zone-marker-strip")) { event.preventDefault(); onRequestAdd(); } }}>
         <div className="canvas-control absolute left-3 top-3 z-30 flex items-center gap-2 rounded-md border bg-white/95 p-2 text-xs shadow-sm"><span>{Math.round(scale * 100)}%</span><button className="underline" onClick={() => fitAll()}>Xem cả hai kho</button><button className="underline" onClick={() => resetTransform()}>Đặt lại</button>{overview && <span className="text-slate-500">Zoom gần để kéo thả</span>}</div>
         <div className="canvas-control absolute right-3 top-3 z-30 flex w-64 items-center gap-2 rounded-md border bg-white/95 p-2 shadow-sm"><input ref={searchInputRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Tìm sản phẩm…" className="min-w-0 flex-1 bg-transparent text-sm outline-none" />{matches && <span className="text-xs text-slate-500">{matches.size}</span>}</div>
         {notice && <div className="pointer-events-none absolute left-1/2 top-14 z-40 -translate-x-1/2 rounded bg-red-600 px-3 py-2 text-sm font-semibold text-white shadow">{notice}</div>}
@@ -374,12 +420,14 @@ export function CanvasViewport({ products, branchId, zone, dryZoneMarker, onDryZ
             </div>
             <p className="mt-6 border-t-2 border-slate-200 pt-5 text-[28px]">Mẹo: zoom từ 30% để đọc tên và kéo chip.</p>
           </aside>
-          {dryZoneMarker && getWarehouseFloorPlan(branchId, "dry") && <ZoneMarkerStrip layout={dryZoneMarker} scale={scale} disabled={dryZoneMarker.locked || overview || spacePressed} onContextMenu={(event) => { event.preventDefault(); setContextMenu(null); setZoneMarkerContextMenu({ x: event.clientX, y: event.clientY }); }} />}
+          {dryTopZoneMarkers && getWarehouseFloorPlan(branchId, "dry") && DRY_TOP_ZONE_MARKER_LABELS.map((label) => <TopZoneMarker key={label} label={label} layout={dryTopZoneMarkers[label]} scale={scale} disabled={dryTopZoneMarkers[label].locked || overview || spacePressed} onContextMenu={(event) => { event.preventDefault(); setContextMenu(null); setZoneMarkerContextMenu({ x: event.clientX, y: event.clientY, marker: label }); }} />)}
+          {dryZoneMarker && getWarehouseFloorPlan(branchId, "dry") && <ZoneMarkerStrip layout={dryZoneMarker} scale={scale} disabled={dryZoneMarker.locked || overview || spacePressed} onContextMenu={(event) => { event.preventDefault(); setContextMenu(null); setZoneMarkerContextMenu({ x: event.clientX, y: event.clientY, marker: "side" }); }} />}
           {visibleProducts.map((product) => <ProductChip key={product.productId} product={product} world={worldPositions.get(product.productId) ?? { x: product.x, y: product.y }} scale={scale} selected={selectedSet.has(product.productId)} disabled={overview || spacePressed} overview={overview} showDetails={showDetails} dimmed={matches !== null && !matches.has(product.productId)} showInventory={settings.showInventory} groupDelta={dragPreview?.ids.includes(product.productId) ? { x: dragPreview.x, y: dragPreview.y } : null} onSelect={sameZoneSelection} onContextMenu={openContextMenu} />)}
         </div></TransformComponent>
       </div>}
     </TransformWrapper>
     {contextMenu && <div className="fixed z-50 min-w-52 rounded-md border bg-white py-1 text-sm shadow-lg" style={{ left: contextMenu.x, top: contextMenu.y }}><button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:text-slate-400" disabled={!undoCount} onClick={undo}>Hoàn tác (Ctrl+Z){undoCount ? ` · ${undoCount}` : ""}</button><div className="my-1 border-t" /><button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:text-slate-400" disabled={selectedProducts.length < 2} onClick={() => group(crypto.randomUUID())}>Group</button><button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:text-slate-400" disabled={!selectedProducts.some((item) => item.groupId)} onClick={() => group(null)}>Ungroup</button><div className="my-1 border-t" /><div className="grid grid-cols-4 gap-2 px-3 py-2">{CHIP_COLORS.map((color) => <button key={color} aria-label={`Đổi màu ${color}`} className="h-7 rounded ring-1 ring-slate-300 hover:scale-110" style={{ backgroundColor: color }} onClick={() => changeColor(color)} />)}</div><div className="my-1 border-t" /><button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:text-slate-400" disabled={selectedProducts.length < 2} onClick={() => arrange("vertical")}>Xếp dọc, cách nhau 5px</button><button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:text-slate-400" disabled={selectedProducts.length < 2} onClick={() => arrange("horizontal")}>Xếp ngang, cách nhau 5px</button><button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:text-slate-400" disabled={selectedProducts.length < 2} onClick={() => arrange("grid")}>Sắp xếp theo lưới 5px</button><button className="block w-full px-3 py-1.5 text-left text-red-600 hover:bg-red-50" onClick={removeSelected}>Xóa</button></div>}
-    {zoneMarkerContextMenu && dryZoneMarker && <div className="fixed z-50 min-w-56 rounded-md border bg-white py-1 text-sm shadow-lg" style={{ left: zoneMarkerContextMenu.x, top: zoneMarkerContextMenu.y }}><button className="block w-full px-3 py-2 text-left font-medium hover:bg-amber-50" onClick={() => updateDryZoneMarker({ ...dryZoneMarker, locked: !dryZoneMarker.locked })}>{dryZoneMarker.locked ? "Mở khóa dãy phân khu" : "Cố định xuống nền"}</button></div>}
+    {zoneMarkerContextMenu?.marker === "side" && dryZoneMarker && <div className="fixed z-50 min-w-56 rounded-md border bg-white py-1 text-sm shadow-lg" style={{ left: zoneMarkerContextMenu.x, top: zoneMarkerContextMenu.y }}><button className="block w-full px-3 py-2 text-left font-medium hover:bg-amber-50" onClick={() => updateDryZoneMarker({ ...dryZoneMarker, locked: !dryZoneMarker.locked })}>{dryZoneMarker.locked ? "Mở khóa dãy phân khu" : "Cố định xuống nền"}</button></div>}
+    {zoneMarkerContextMenu && zoneMarkerContextMenu.marker !== "side" && dryTopZoneMarkers && (() => { const label = zoneMarkerContextMenu.marker as DryTopZoneMarkerLabel; const marker = dryTopZoneMarkers[label]; return <div className="fixed z-50 min-w-56 rounded-md border bg-white py-1 text-sm shadow-lg" style={{ left: zoneMarkerContextMenu.x, top: zoneMarkerContextMenu.y }}><button className="block w-full px-3 py-2 text-left font-medium hover:bg-amber-50" onClick={() => updateDryTopZoneMarker(label, { ...marker, locked: !marker.locked })}>{marker.locked ? "Mở khóa phân khu này" : "Cố định phân khu này"}</button></div>; })()}
   </DndContext>;
 }

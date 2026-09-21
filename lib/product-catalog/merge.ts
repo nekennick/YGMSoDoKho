@@ -25,6 +25,7 @@ export type WarehouseInitialData = {
   availableProducts: ProductOption[];
   orphanLayoutProductIds: number[];
   dryZoneMarker: ZoneMarkerLayout | null;
+  dryTopZoneMarkers: Record<import("@/lib/warehouse/zone-markers").DryTopZoneMarkerLabel, ZoneMarkerLayout> | null;
 };
 
 export function mergeCatalogAndLayouts(
@@ -63,5 +64,5 @@ export function mergeCatalogAndLayouts(
     .filter((layout) => !knownProductIds.has(layout.productId))
     .map((layout) => layout.productId);
 
-  return { canvasProducts, availableProducts, orphanLayoutProductIds, dryZoneMarker: null };
+  return { canvasProducts, availableProducts, orphanLayoutProductIds, dryZoneMarker: null, dryTopZoneMarkers: null };
 }

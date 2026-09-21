@@ -25,7 +25,7 @@ function traceUsableArea(
   context.closePath();
 }
 
-function drawFloorPlan(canvas: HTMLCanvasElement, plan: WarehouseFloorPlanConfig, showGrid: boolean, maxPixels: number) {
+export function drawFloorPlan(canvas: HTMLCanvasElement, plan: WarehouseFloorPlanConfig, showGrid: boolean, maxPixels: number) {
   const planRect = getFloorPlanCanvasRect(plan);
   const usableRect = getFloorPlanUsableRect(plan);
   const context = canvas.getContext("2d");
@@ -213,7 +213,7 @@ export const WarehouseFloorPlan = memo(function WarehouseFloorPlan({ plan, offse
 
   useEffect(() => {
     const smallScreen = window.matchMedia("(max-width: 1024px)").matches;
-    if (canvasRef.current) drawFloorPlan(canvasRef.current, plan, settings.showFloorGrid, smallScreen ? 4_000_000 : Number.POSITIVE_INFINITY);
+    if (canvasRef.current) drawFloorPlan(canvasRef.current, plan, settings.showFloorGrid, smallScreen ? 1_500_000 : Number.POSITIVE_INFINITY);
   }, [plan, settings.showFloorGrid]);
 
   return (

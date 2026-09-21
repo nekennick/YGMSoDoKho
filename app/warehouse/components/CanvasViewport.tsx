@@ -6,7 +6,7 @@ import { TransformComponent, TransformWrapper, type ReactZoomPanPinchRef } from 
 import type { CanvasProduct } from "@/lib/product-catalog/merge";
 import { useKeyboard } from "@/app/warehouse/hooks/useKeyboard";
 import { deleteProductLayoutAction, moveProductLayoutsAction, restoreProductLayoutsAction, setProductLayoutsGroupAction, updateProductColorsAction } from "@/app/warehouse/actions/product-layout";
-import { WarehouseFloorPlan } from "@/app/warehouse/components/WarehouseFloorPlan";
+import { drawFloorPlan, WarehouseFloorPlan } from "@/app/warehouse/components/WarehouseFloorPlan";
 import { findNearestValidFloorPlanPosition, getFloorPlanCanvasRect, getWarehouseFloorPlan, isPositionInsideFloorPlan, PRODUCT_CHIP_HEIGHT, PRODUCT_CHIP_WIDTH } from "@/lib/warehouse/floor-plans";
 import { useWarehouseSettings } from "@/app/warehouse/components/WarehouseSettings";
 import { saveWarehouseZoneMarkerAction } from "@/app/warehouse/actions/zone-marker";
@@ -14,7 +14,8 @@ import { DRY_TOP_ZONE_MARKER_HEIGHT, DRY_TOP_ZONE_MARKER_LABELS, DRY_ZONE_MARKER
 
 const NAME_VISIBLE_SCALE = 0.3;
 const DETAILS_VISIBLE_SCALE = 0.7;
-const CANVAS_SIZE = 12000;
+const CANVAS_WIDTH = 3600;
+const CANVAS_HEIGHT = 7200;
 const PLAN_GAP = 520;
 const CHIP_COLORS = ["#2563eb", "#059669", "#d97706", "#dc2626", "#7c3aed", "#db2777", "#475569", "#92400e"];
 const DRY_ZONE_MARKER_DRAG_ID = "dry-zone-marker-strip";
@@ -23,6 +24,58 @@ const TOP_MARKER_MIN_GAP = 170;
 
 type ZonedProduct = CanvasProduct & { zone: string };
 type Point = { x: number; y: number };
+
+function downloadBlob(blob: Blob, filename: string) {
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = filename;
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+}
+
+function dataUrlToBytes(dataUrl: string) {
+  const binary = atob(dataUrl.split(",")[1] ?? "");
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
+
+function createPdfFromJpeg(jpeg: Uint8Array, imageWidth: number, imageHeight: number) {
+  const pageWidth = 842;
+  const pageHeight = Math.max(1191, Math.ceil((pageWidth - 72) * imageHeight / imageWidth + 72));
+  const imageDrawWidth = pageWidth - 72;
+  const imageDrawHeight = imageDrawWidth * imageHeight / imageWidth;
+  const content = `q\n${imageDrawWidth} 0 0 ${imageDrawHeight} 36 ${pageHeight - 36 - imageDrawHeight} cm\n/Image1 Do\nQ\n`;
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Resources << /XObject << /Image1 5 0 R >> >> /Contents 4 0 R >>`,
+    `<< /Length ${new TextEncoder().encode(content).length} >>\nstream\n${content}endstream`,
+    `<< /Type /XObject /Subtype /Image /Width ${imageWidth} /Height ${imageHeight} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpeg.length} >>`,
+  ];
+  const chunks: Uint8Array[] = [new TextEncoder().encode("%PDF-1.4\n%\u00ff\u00ff\u00ff\u00ff\n")];
+  const offsets = [0];
+  let length = chunks[0].length;
+  for (let index = 0; index < objects.length; index += 1) {
+    offsets.push(length);
+    const prefix = new TextEncoder().encode(`${index + 1} 0 obj\n${objects[index]}\n`);
+    chunks.push(prefix);
+    length += prefix.length;
+    if (index === 4) { chunks.push(jpeg); length += jpeg.length; }
+    const suffix = new TextEncoder().encode("\nendobj\n");
+    chunks.push(suffix);
+    length += suffix.length;
+  }
+  const xrefOffset = length;
+  const xref = `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.slice(1).map((offset) => `${offset.toString().padStart(10, "0")} 00000 n \n`).join("")}trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
+  chunks.push(new TextEncoder().encode(xref));
+  return new Blob(chunks as unknown as BlobPart[], { type: "application/pdf" });
+}
+
+function truncateCanvasText(context: CanvasRenderingContext2D, value: string, maxWidth: number) {
+  if (context.measureText(value).width <= maxWidth) return value;
+  let text = value;
+  while (text.length && context.measureText(`${text}…`).width > maxWidth) text = text.slice(0, -1);
+  return `${text}…`;
+}
 
 function zoneOffsets(branchId: number, zones: readonly string[]) {
   if (zones.includes("cold") && zones.includes("dry")) {
@@ -52,7 +105,7 @@ const ProductChip = memo(function ProductChip({ product, world, scale, selected,
   return (
     <div ref={setNodeRef} {...listeners} {...attributes} data-product-id={product.productId} title={product.name} onClick={(event) => onSelect(product.productId, event.shiftKey)} onContextMenu={(event) => onContextMenu(product.productId, event)}
       className={`product-chip absolute flex h-10 w-[250px] touch-none items-center overflow-hidden rounded-lg border px-3 text-3xl font-medium text-white shadow-sm ${selected ? "border-yellow-300 ring-4 ring-yellow-300/80 ring-offset-2" : product.groupId ? "border-violet-100 ring-2 ring-violet-300/80" : "border-white/60"} ${dimmed ? "opacity-25" : ""}`}
-      style={{ left: world.x, top: world.y, backgroundColor: product.color, transform: `translate3d(${dx}px, ${dy}px, 0)`, zIndex: isDragging ? 20 : 1 }}>
+      style={{ left: world.x, top: world.y, backgroundColor: product.color, transform: isDragging || groupDelta ? `translate(${dx}px, ${dy}px)` : undefined, zIndex: isDragging ? 20 : 1 }}>
       <span className="min-w-0 flex-1 truncate">{product.name}</span>
       {showDetails && showInventory && <span className="ml-2 shrink-0 text-sm font-normal text-white/80">({product.quantity})</span>}
       {showDetails && product.groupId && <span className="ml-1.5 shrink-0 text-xs" title="Đã group">⛓</span>}
@@ -66,7 +119,7 @@ const ZoneMarkerStrip = memo(function ZoneMarkerStrip({ layout, scale, disabled,
   const dy = isDragging ? (transform?.y ?? 0) / scale : 0;
   return (
     <div ref={setNodeRef} {...listeners} {...attributes} className={`zone-marker-strip pointer-events-none absolute ${disabled ? "cursor-default" : "cursor-grab active:cursor-grabbing"}`}
-      style={{ left: layout.x, top: layout.y, width: DRY_ZONE_MARKER_WIDTH, height: DRY_ZONE_MARKER_SPACING * (DRY_ZONE_MARKER_LABELS.length - 1) + DRY_ZONE_MARKER_HEIGHT, transform: isDragging ? `translate(${dx}px, ${dy}px)` : undefined, zIndex: layout.locked ? 0 : 10 }}
+      style={{ left: layout.x, top: layout.y, width: DRY_ZONE_MARKER_WIDTH, height: DRY_ZONE_MARKER_HEIGHT, transform: isDragging ? `translate(${dx}px, ${dy}px)` : undefined, zIndex: layout.locked ? 0 : 10 }}
       onContextMenu={onContextMenu} title={layout.locked ? "Chuột phải để mở khóa dãy phân khu" : "Kéo để canh dãy phân khu. Chuột phải để cố định xuống nền"}>
       {DRY_ZONE_MARKER_LABELS.map((label, index) => (
         <div key={label} className="pointer-events-none absolute left-0 h-[80px] w-full touch-none" style={{ top: index * DRY_ZONE_MARKER_SPACING }}>
@@ -83,7 +136,7 @@ const TopZoneMarker = memo(function TopZoneMarker({ label, layout, scale, disabl
   const dx = isDragging ? (transform?.x ?? 0) / scale : 0;
   return (
     <div ref={setNodeRef} {...listeners} {...attributes} className={`zone-marker-strip pointer-events-none absolute w-[140px] touch-none ${disabled ? "cursor-default" : "cursor-ew-resize active:cursor-grabbing"}`}
-      style={{ left: layout.x, top: layout.y, height: DRY_TOP_ZONE_MARKER_HEIGHT, transform: isDragging ? `translate(${dx}px, 0)` : undefined, zIndex: layout.locked ? 0 : 10 }}
+      style={{ left: layout.x, top: layout.y, height: 76, transform: isDragging ? `translate(${dx}px, 0)` : undefined, zIndex: layout.locked ? 0 : 10 }}
       onContextMenu={onContextMenu}>
       <div className="pointer-events-none absolute left-[69px] top-[118px] h-[6400px] w-[2px] bg-amber-600 shadow-[0_0_0_1px_rgba(120,53,15,0.45)]" />
       <span className="pointer-events-auto absolute left-0 top-0 flex h-[76px] w-[140px] items-center justify-center rounded-md border-2 border-amber-700 bg-amber-300/95 text-[56px] font-black leading-none text-amber-950 shadow-md">{label}</span>
@@ -102,7 +155,7 @@ export function CanvasViewport({ products, branchId, zone, dryZoneMarker, onDryZ
   const zones = useMemo(() => zoneKey ? zoneKey.split("|") : [zone], [zone, zoneKey]);
   const offsets = useMemo(() => zoneOffsets(branchId, zones), [branchId, zones]);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
-  const [scale, setScale] = useState(0.3);
+  const [scale, setScale] = useState(0.2);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; productId: number } | null>(null);
   const [zoneMarkerContextMenu, setZoneMarkerContextMenu] = useState<{ x: number; y: number; marker: "side" | DryTopZoneMarkerLabel } | null>(null);
@@ -291,6 +344,106 @@ export function CanvasViewport({ products, branchId, zone, dryZoneMarker, onDryZ
   }, [allProducts, focusProductId, worldPosition]);
   useEffect(() => { const listener = (event: KeyboardEvent) => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") { event.preventDefault(); undo(); return; } if ((event.key === "Delete" || event.key === "Backspace") && selectedIds.length) { event.preventDefault(); removeSelected(); } }; window.addEventListener("keydown", listener); return () => window.removeEventListener("keydown", listener); }, [removeSelected, selectedIds.length, undo]);
   const visibleProducts = useMemo(() => allProducts, [allProducts]);
+  const [exporting, setExporting] = useState<"png" | "pdf" | null>(null);
+  const exportWarehouseImage = useCallback((format: "png" | "pdf") => {
+    if (window.matchMedia("(max-width: 1024px), (pointer: coarse)").matches) {
+      setNotice("Xuất ảnh độ phân giải cao cần thực hiện trên máy tính để tránh trình duyệt điện thoại bị quá tải.");
+      return;
+    }
+    setExporting(format);
+    window.setTimeout(() => {
+      try {
+        const padding = 120;
+        const floorRects = zones.flatMap((targetZone) => {
+          const plan = getWarehouseFloorPlan(branchId, targetZone);
+          if (!plan) return [];
+          const rect = getFloorPlanCanvasRect(plan);
+          const offset = offsets.get(targetZone) ?? { x: 0, y: 0 };
+          return [{ x: rect.x + offset.x, y: rect.y + offset.y, width: rect.width, height: rect.height }];
+        });
+        if (!floorRects.length) return;
+        const left = Math.min(...floorRects.map((rect) => rect.x), ...(dryTopZoneMarkers ? DRY_TOP_ZONE_MARKER_LABELS.map((label) => dryTopZoneMarkers[label].x) : [Infinity])) - padding;
+        const top = Math.min(...floorRects.map((rect) => rect.y), ...(dryTopZoneMarkers ? DRY_TOP_ZONE_MARKER_LABELS.map((label) => dryTopZoneMarkers[label].y) : [Infinity])) - padding;
+        const right = Math.max(...floorRects.map((rect) => rect.x + rect.width), ...(dryTopZoneMarkers ? DRY_TOP_ZONE_MARKER_LABELS.map((label) => dryTopZoneMarkers[label].x + 140) : [-Infinity]), ...(dryZoneMarker ? [dryZoneMarker.x + DRY_ZONE_MARKER_WIDTH] : [-Infinity])) + padding;
+        const bottom = Math.max(...floorRects.map((rect) => rect.y + rect.height), ...(dryTopZoneMarkers ? DRY_TOP_ZONE_MARKER_LABELS.map((label) => dryTopZoneMarkers[label].y + DRY_TOP_ZONE_MARKER_HEIGHT) : [-Infinity]), ...(dryZoneMarker ? [dryZoneMarker.y + DRY_ZONE_MARKER_SPACING * (DRY_ZONE_MARKER_LABELS.length - 1) + DRY_ZONE_MARKER_HEIGHT] : [-Infinity])) + padding;
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.ceil(right - left);
+        canvas.height = Math.ceil(bottom - top);
+        const context = canvas.getContext("2d");
+        if (!context) return;
+        context.fillStyle = "#e2e8f0";
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        context.save();
+        context.translate(-left, -top);
+        for (const targetZone of zones) {
+          const plan = getWarehouseFloorPlan(branchId, targetZone);
+          if (!plan) continue;
+          const planCanvas = document.createElement("canvas");
+          drawFloorPlan(planCanvas, plan, settings.showFloorGrid, Number.POSITIVE_INFINITY);
+          const offset = offsets.get(targetZone) ?? { x: 0, y: 0 };
+          context.drawImage(planCanvas, plan.canvasX + offset.x, plan.canvasY + offset.y);
+          context.fillStyle = "#1e3a8a";
+          context.font = "800 52px system-ui, sans-serif";
+          context.textAlign = "left";
+          context.fillText(plan.displayTitle ?? plan.name.toUpperCase(), plan.canvasX + offset.x, plan.canvasY + offset.y - 28);
+          context.fillStyle = "#475569";
+          context.font = "600 28px system-ui, sans-serif";
+          context.fillText(plan.displaySubtitle ?? plan.name, plan.canvasX + offset.x, plan.canvasY + offset.y - 68);
+        }
+        if (dryTopZoneMarkers) for (const label of DRY_TOP_ZONE_MARKER_LABELS) {
+          const marker = dryTopZoneMarkers[label];
+          context.fillStyle = "#b45309";
+          context.fillRect(marker.x + 69, marker.y + 118, 2, 6400);
+          context.fillStyle = "#fcd34d";
+          context.strokeStyle = "#b45309";
+          context.lineWidth = 3;
+          context.fillRect(marker.x, marker.y, 140, 76);
+          context.strokeRect(marker.x, marker.y, 140, 76);
+          context.fillStyle = "#78350f";
+          context.font = "900 56px system-ui, sans-serif";
+          context.textAlign = "center";
+          context.textBaseline = "middle";
+          context.fillText(label, marker.x + 70, marker.y + 39);
+        }
+        if (dryZoneMarker) for (const [index, label] of DRY_ZONE_MARKER_LABELS.entries()) {
+          const y = dryZoneMarker.y + index * DRY_ZONE_MARKER_SPACING;
+          context.fillStyle = "#b45309";
+          context.fillRect(dryZoneMarker.x, y + 38, 1120, 2);
+          context.fillStyle = "#fcd34d";
+          context.strokeStyle = "#b45309";
+          context.lineWidth = 3;
+          context.fillRect(dryZoneMarker.x + 1160, y, 140, 76);
+          context.strokeRect(dryZoneMarker.x + 1160, y, 140, 76);
+          context.fillStyle = "#78350f";
+          context.font = "900 56px system-ui, sans-serif";
+          context.textAlign = "center";
+          context.textBaseline = "middle";
+          context.fillText(label, dryZoneMarker.x + 1230, y + 39);
+        }
+        for (const product of allProducts) {
+          const position = worldPosition(product);
+          context.fillStyle = product.color;
+          context.beginPath();
+          context.roundRect(position.x, position.y, PRODUCT_CHIP_WIDTH, PRODUCT_CHIP_HEIGHT, 7);
+          context.fill();
+          context.strokeStyle = "rgba(255,255,255,0.8)";
+          context.lineWidth = 2;
+          context.stroke();
+          context.fillStyle = "#ffffff";
+          context.textAlign = "left";
+          context.textBaseline = "middle";
+          context.font = "600 22px system-ui, sans-serif";
+          context.fillText(truncateCanvasText(context, product.name, 218), position.x + 10, position.y + 20);
+        }
+        context.restore();
+        const filename = `so-do-tong-kho-yagami-${new Date().toISOString().slice(0, 10)}`;
+        if (format === "png") canvas.toBlob((blob) => { if (blob) downloadBlob(blob, `${filename}.png`); }, "image/png");
+        else downloadBlob(createPdfFromJpeg(dataUrlToBytes(canvas.toDataURL("image/jpeg", 0.94)), canvas.width, canvas.height), `${filename}.pdf`);
+      } finally {
+        setExporting(null);
+      }
+    }, 20);
+  }, [allProducts, branchId, dryTopZoneMarkers, dryZoneMarker, offsets, settings.showFloorGrid, worldPosition, zones]);
 
   return <DndContext sensors={sensors} autoScroll={false} onDragStart={(event: DragStartEvent) => {
     const topLabel = typeof event.active.id === "string" && event.active.id.startsWith(DRY_TOP_ZONE_MARKER_DRAG_ID_PREFIX)
@@ -383,11 +536,11 @@ export function CanvasViewport({ products, branchId, zone, dryZoneMarker, onDryZ
         }
         if (!selectionStart.current) return; const rect = event.currentTarget.getBoundingClientRect(); const end = { x: event.clientX - rect.left, y: event.clientY - rect.top }; const width = Math.abs(end.x - selectionStart.current.x); const height = Math.abs(end.y - selectionStart.current.y); if (width > 3 || height > 3) selectionDragged.current = true; setSelectionBox({ x: Math.min(selectionStart.current.x, end.x), y: Math.min(selectionStart.current.y, end.y), width, height });
       }} onPointerUp={() => { middlePanStart.current = null; selectionJustEnded.current = selectionDragged.current; if (selectionBox && selectionDragged.current && canvasRef.current) { const canvas = canvasRef.current.getBoundingClientRect(); const ids = [...canvasRef.current.querySelectorAll<HTMLElement>(".product-chip")].filter((node) => { const rect = node.getBoundingClientRect(); const left = rect.left - canvas.left; const top = rect.top - canvas.top; return left < selectionBox.x + selectionBox.width && left + rect.width > selectionBox.x && top < selectionBox.y + selectionBox.height && top + rect.height > selectionBox.y; }).map((node) => Number(node.dataset.productId)); const first = allProducts.find((item) => item.productId === ids[0]); setSelectedIds(first ? ids.filter((id) => allProducts.find((item) => item.productId === id)?.zone === first.zone) : []); } selectionStart.current = null; setSelectionBox(null); }} onPointerCancel={() => { middlePanStart.current = null; markerDragActive.current = null; selectionStart.current = null; selectionDragged.current = false; selectionJustEnded.current = false; setSelectionBox(null); }} onClick={(event) => { const target = event.target as HTMLElement; if (!target.closest(".product-chip") && !target.closest(".zone-marker-strip") && !target.closest(".canvas-control")) { setContextMenu(null); setZoneMarkerContextMenu(null); if (!selectionJustEnded.current) setSelectedIds([]); } selectionJustEnded.current = false; }} onContextMenu={(event) => { const target = event.target as HTMLElement; if (!target.closest(".product-chip") && !target.closest(".zone-marker-strip")) { event.preventDefault(); onRequestAdd(); } }}>
-        <div className="canvas-control absolute left-3 top-3 z-30 flex items-center gap-2 rounded-md border bg-white/95 p-2 text-xs shadow-sm"><span>{Math.round(scale * 100)}%</span><button className="underline" onClick={() => fitAll()}>Xem cả hai kho</button><button className="underline" onClick={() => resetTransform()}>Đặt lại</button>{overview && <span className="text-slate-500">Zoom gần để kéo thả</span>}</div>
+        <div className="canvas-control absolute left-3 top-3 z-30 flex items-center gap-2 rounded-md border bg-white/95 p-2 text-xs shadow-sm"><span>{Math.round(scale * 100)}%</span><button className="underline" onClick={() => fitAll()}>Xem cả hai kho</button><button className="underline" onClick={() => resetTransform()}>Đặt lại</button><button className="underline" disabled={exporting !== null} onClick={() => exportWarehouseImage("png")}>{exporting === "png" ? "Đang xuất…" : "Ảnh PNG"}</button><button className="underline" disabled={exporting !== null} onClick={() => exportWarehouseImage("pdf")}>{exporting === "pdf" ? "Đang xuất…" : "PDF"}</button>{overview && <span className="text-slate-500">Zoom gần để kéo thả</span>}</div>
         <div className="canvas-control absolute right-3 top-3 z-30 flex w-64 items-center gap-2 rounded-md border bg-white/95 p-2 shadow-sm"><input ref={searchInputRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Tìm sản phẩm…" className="min-w-0 flex-1 bg-transparent text-sm outline-none" />{matches && <span className="text-xs text-slate-500">{matches.size}</span>}</div>
         {notice && <div className="pointer-events-none absolute left-1/2 top-14 z-40 -translate-x-1/2 rounded bg-red-600 px-3 py-2 text-sm font-semibold text-white shadow">{notice}</div>}
         {selectionBox && <div className="pointer-events-none absolute z-20 border border-blue-500 bg-blue-400/20" style={{ left: selectionBox.x, top: selectionBox.y, width: selectionBox.width, height: selectionBox.height }} />}
-        <TransformComponent wrapperClass="!h-full !w-full" contentClass="!h-full !w-full"><div className="relative" style={{ width: CANVAS_SIZE, height: CANVAS_SIZE }}>
+        <TransformComponent wrapperClass="!h-full !w-full" contentClass="!h-full !w-full"><div className="relative" style={{ width: CANVAS_WIDTH, height: CANVAS_HEIGHT }}>
           {zones.map((targetZone) => { const plan = getWarehouseFloorPlan(branchId, targetZone); return plan ? <WarehouseFloorPlan key={targetZone} plan={plan} offset={offsets.get(targetZone)} infoOffset={targetZone === "dry" && zones.includes("cold") ? { x: 1660, y: 0 } : undefined} /> : null; })}
           {zones.includes("cold") && zones.includes("dry") && (
             <div className="pointer-events-none absolute z-0 text-center text-slate-500" aria-hidden="true">

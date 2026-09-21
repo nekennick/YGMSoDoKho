@@ -157,6 +157,22 @@ body {
   }
 }
 
+@media (max-width: 768px), (pointer: coarse) {
+  .intro-orb,
+  .intro-logo-stage,
+  .intro-glass::after {
+    animation: none;
+    will-change: auto;
+  }
+
+  .intro-brand-mark,
+  .intro-glass,
+  .intro-logo-stage {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
 @media (pointer: fine) {
   .touch-trash-zone { display: none; }
 }

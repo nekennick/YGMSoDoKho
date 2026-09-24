@@ -49,13 +49,16 @@ export function drawFloorPlan(canvas: HTMLCanvasElement, plan: WarehouseFloorPla
   context.clip();
 
   if (showGrid) {
-    const minorGridSize = plan.pixelsPerMeter / 2;
+    const majorGridWidth = plan.pixelsPerMeter;
+    const majorGridHeight = plan.pixelsPerMeter * 1.2;
+    const minorGridWidth = majorGridWidth / 2;
+    const minorGridHeight = majorGridHeight / 2;
     context.beginPath();
-    for (let x = minorGridSize; x < planRect.width; x += minorGridSize) {
+    for (let x = minorGridWidth; x < planRect.width; x += minorGridWidth) {
       context.moveTo(x, 0);
       context.lineTo(x, usableRect.height);
     }
-    for (let y = minorGridSize; y < usableRect.height; y += minorGridSize) {
+    for (let y = minorGridHeight; y < usableRect.height; y += minorGridHeight) {
       context.moveTo(0, y);
       context.lineTo(planRect.width, y);
     }
@@ -64,11 +67,11 @@ export function drawFloorPlan(canvas: HTMLCanvasElement, plan: WarehouseFloorPla
     context.stroke();
 
     context.beginPath();
-    for (let x = plan.pixelsPerMeter; x < planRect.width; x += plan.pixelsPerMeter) {
+    for (let x = majorGridWidth; x < planRect.width; x += majorGridWidth) {
       context.moveTo(x, 0);
       context.lineTo(x, usableRect.height);
     }
-    for (let y = plan.pixelsPerMeter; y < usableRect.height; y += plan.pixelsPerMeter) {
+    for (let y = majorGridHeight; y < usableRect.height; y += majorGridHeight) {
       context.moveTo(0, y);
       context.lineTo(planRect.width, y);
     }
@@ -106,13 +109,16 @@ export function drawFloorPlan(canvas: HTMLCanvasElement, plan: WarehouseFloorPla
       context.rect(area.x, area.y, area.width, area.height);
       context.clip();
 
-      const minorGridSize = plan.pixelsPerMeter / 2;
+      const majorGridWidth = plan.pixelsPerMeter;
+      const majorGridHeight = plan.pixelsPerMeter * 1.2;
+      const minorGridWidth = majorGridWidth / 2;
+      const minorGridHeight = majorGridHeight / 2;
       context.beginPath();
-      for (let x = area.x + minorGridSize; x < area.x + area.width; x += minorGridSize) {
+      for (let x = area.x + minorGridWidth; x < area.x + area.width; x += minorGridWidth) {
         context.moveTo(x, area.y);
         context.lineTo(x, area.y + area.height);
       }
-      for (let y = area.y + minorGridSize; y < area.y + area.height; y += minorGridSize) {
+      for (let y = area.y + minorGridHeight; y < area.y + area.height; y += minorGridHeight) {
         context.moveTo(area.x, y);
         context.lineTo(area.x + area.width, y);
       }
@@ -121,11 +127,11 @@ export function drawFloorPlan(canvas: HTMLCanvasElement, plan: WarehouseFloorPla
       context.stroke();
 
       context.beginPath();
-      for (let x = area.x + plan.pixelsPerMeter; x < area.x + area.width; x += plan.pixelsPerMeter) {
+      for (let x = area.x + majorGridWidth; x < area.x + area.width; x += majorGridWidth) {
         context.moveTo(x, area.y);
         context.lineTo(x, area.y + area.height);
       }
-      for (let y = area.y + plan.pixelsPerMeter; y < area.y + area.height; y += plan.pixelsPerMeter) {
+      for (let y = area.y + majorGridHeight; y < area.y + area.height; y += majorGridHeight) {
         context.moveTo(area.x, y);
         context.lineTo(area.x + area.width, y);
       }

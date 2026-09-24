@@ -21,6 +21,10 @@ const CHIP_COLORS = ["#2563eb", "#059669", "#d97706", "#dc2626", "#7c3aed", "#db
 const DRY_ZONE_MARKER_DRAG_ID = "dry-zone-marker-strip";
 const DRY_TOP_ZONE_MARKER_DRAG_ID_PREFIX = "dry-top-zone-marker-";
 const TOP_MARKER_MIN_GAP = 170;
+const PALLETS_PER_DRY_ZONE = 5;
+const DRY_ZONE_PALLET_HEIGHT = DRY_ZONE_MARKER_SPACING / PALLETS_PER_DRY_ZONE;
+const DRY_ZONE_PALLET_LABEL_OFFSET_X = 1150;
+const DRY_ZONE_LETTER_LABEL_OFFSET_X = 1250;
 
 type ZonedProduct = CanvasProduct & { zone: string };
 type Point = { x: number; y: number };
@@ -117,14 +121,16 @@ const ZoneMarkerStrip = memo(function ZoneMarkerStrip({ layout, scale, disabled,
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: DRY_ZONE_MARKER_DRAG_ID, disabled });
   const dx = isDragging ? (transform?.x ?? 0) / scale : 0;
   const dy = isDragging ? (transform?.y ?? 0) / scale : 0;
+  const alignedY = Math.round(layout.y / DRY_ZONE_PALLET_HEIGHT) * DRY_ZONE_PALLET_HEIGHT;
   return (
     <div ref={setNodeRef} {...listeners} {...attributes} className={`zone-marker-strip pointer-events-none absolute ${disabled ? "cursor-default" : "cursor-grab active:cursor-grabbing"}`}
-      style={{ left: layout.x, top: layout.y, width: DRY_ZONE_MARKER_WIDTH, height: DRY_ZONE_MARKER_HEIGHT, transform: isDragging ? `translate(${dx}px, ${dy}px)` : undefined, zIndex: layout.locked ? 0 : 10 }}
+      style={{ left: layout.x, top: alignedY, width: DRY_ZONE_MARKER_WIDTH, height: DRY_ZONE_MARKER_HEIGHT, transform: isDragging ? `translate(${dx}px, ${dy}px)` : undefined, zIndex: layout.locked ? 0 : 10 }}
       onContextMenu={onContextMenu} title={layout.locked ? "Chuột phải để mở khóa dãy phân khu" : "Kéo để canh dãy phân khu. Chuột phải để cố định xuống nền"}>
       {DRY_ZONE_MARKER_LABELS.map((label, index) => (
-        <div key={label} className="pointer-events-none absolute left-0 h-[80px] w-full touch-none" style={{ top: index * DRY_ZONE_MARKER_SPACING }}>
-          <div className="absolute left-0 top-[38px] h-px w-[1120px] bg-amber-400 shadow-[0_0_0_1px_rgba(255,255,255,0.5)]" />
-          <span className="pointer-events-auto absolute left-[1160px] top-0 flex h-[76px] w-[140px] items-center justify-center rounded-md border-2 border-amber-600 bg-amber-300/95 text-[56px] font-black leading-none text-amber-950 shadow-sm">{label}</span>
+        <div key={label} className="pointer-events-none absolute left-0 h-[600px] w-full touch-none" style={{ top: index * DRY_ZONE_MARKER_SPACING }}>
+          <div className="absolute left-0 top-0 h-[2px] w-[1120px] bg-amber-500 shadow-[0_0_0_1px_rgba(255,255,255,0.5)]" />
+          {Array.from({ length: PALLETS_PER_DRY_ZONE }, (_, palletIndex) => <span key={palletIndex} className="absolute flex h-[52px] w-[72px] items-center justify-center rounded-md border-2 border-sky-600 bg-sky-200/95 text-[34px] font-extrabold leading-none text-sky-950 shadow-sm" style={{ left: DRY_ZONE_PALLET_LABEL_OFFSET_X, top: palletIndex * DRY_ZONE_PALLET_HEIGHT + 34 }}>{PALLETS_PER_DRY_ZONE - palletIndex}</span>)}
+          <span className="pointer-events-auto absolute top-[-38px] flex h-[76px] w-[140px] items-center justify-center rounded-md border-2 border-amber-600 bg-amber-300/95 text-[56px] font-black leading-none text-amber-950 shadow-sm" style={{ left: DRY_ZONE_LETTER_LABEL_OFFSET_X }}>{label}</span>
         </div>
       ))}
     </div>
@@ -233,9 +239,9 @@ export function CanvasViewport({ products, branchId, zone, dryZoneMarker, onDryZ
   }, [onProductsChange, onProductsRestored, restoreSnapshot, trackMutation]);
   const selectedProducts = useMemo(() => allProducts.filter((item) => selectedSet.has(item.productId)), [allProducts, selectedSet]);
   const selectedZone = selectedProducts[0]?.zone;
-  const clampMarkerPosition = useCallback((position: Point): Point => {
+  const clampMarkerPosition = useCallback((position: Point, snapToPalletGrid = false): Point => {
     const snap = (value: number) => Math.round(value / 50) * 50;
-    return { x: snap(position.x), y: snap(position.y) };
+    return { x: snap(position.x), y: snapToPalletGrid ? Math.round(position.y / DRY_ZONE_PALLET_HEIGHT) * DRY_ZONE_PALLET_HEIGHT : snap(position.y) };
   }, []);
   const updateDryZoneMarker = useCallback((next: ZoneMarkerLayout) => {
     if (!dryZoneMarker) return;
@@ -364,7 +370,7 @@ export function CanvasViewport({ products, branchId, zone, dryZoneMarker, onDryZ
         if (!floorRects.length) return;
         const left = Math.min(...floorRects.map((rect) => rect.x), ...(dryTopZoneMarkers ? DRY_TOP_ZONE_MARKER_LABELS.map((label) => dryTopZoneMarkers[label].x) : [Infinity])) - padding;
         const top = Math.min(...floorRects.map((rect) => rect.y), ...(dryTopZoneMarkers ? DRY_TOP_ZONE_MARKER_LABELS.map((label) => dryTopZoneMarkers[label].y) : [Infinity])) - padding;
-        const right = Math.max(...floorRects.map((rect) => rect.x + rect.width), ...(dryTopZoneMarkers ? DRY_TOP_ZONE_MARKER_LABELS.map((label) => dryTopZoneMarkers[label].x + 140) : [-Infinity]), ...(dryZoneMarker ? [dryZoneMarker.x + DRY_ZONE_MARKER_WIDTH] : [-Infinity])) + padding;
+        const right = Math.max(...floorRects.map((rect) => rect.x + rect.width), ...(dryTopZoneMarkers ? DRY_TOP_ZONE_MARKER_LABELS.map((label) => dryTopZoneMarkers[label].x + 140) : [-Infinity]), ...(dryZoneMarker ? [dryZoneMarker.x + DRY_ZONE_LETTER_LABEL_OFFSET_X + 140] : [-Infinity])) + padding;
         const bottom = Math.max(...floorRects.map((rect) => rect.y + rect.height), ...(dryTopZoneMarkers ? DRY_TOP_ZONE_MARKER_LABELS.map((label) => dryTopZoneMarkers[label].y + DRY_TOP_ZONE_MARKER_HEIGHT) : [-Infinity]), ...(dryZoneMarker ? [dryZoneMarker.y + DRY_ZONE_MARKER_SPACING * (DRY_ZONE_MARKER_LABELS.length - 1) + DRY_ZONE_MARKER_HEIGHT] : [-Infinity])) + padding;
         const canvas = document.createElement("canvas");
         canvas.width = Math.ceil(right - left);
@@ -406,19 +412,32 @@ export function CanvasViewport({ products, branchId, zone, dryZoneMarker, onDryZ
           context.fillText(label, marker.x + 70, marker.y + 39);
         }
         if (dryZoneMarker) for (const [index, label] of DRY_ZONE_MARKER_LABELS.entries()) {
-          const y = dryZoneMarker.y + index * DRY_ZONE_MARKER_SPACING;
+          const y = Math.round(dryZoneMarker.y / DRY_ZONE_PALLET_HEIGHT) * DRY_ZONE_PALLET_HEIGHT + index * DRY_ZONE_MARKER_SPACING;
           context.fillStyle = "#b45309";
-          context.fillRect(dryZoneMarker.x, y + 38, 1120, 2);
+          context.fillRect(dryZoneMarker.x, y, 1120, 2);
+          for (let palletIndex = 0; palletIndex < PALLETS_PER_DRY_ZONE; palletIndex += 1) {
+            const palletY = y + palletIndex * DRY_ZONE_PALLET_HEIGHT + 34;
+            context.fillStyle = "#bae6fd";
+            context.strokeStyle = "#0284c7";
+            context.lineWidth = 3;
+            context.fillRect(dryZoneMarker.x + DRY_ZONE_PALLET_LABEL_OFFSET_X, palletY, 72, 52);
+            context.strokeRect(dryZoneMarker.x + DRY_ZONE_PALLET_LABEL_OFFSET_X, palletY, 72, 52);
+            context.fillStyle = "#0c4a6e";
+            context.font = "800 34px system-ui, sans-serif";
+            context.textAlign = "center";
+            context.textBaseline = "middle";
+            context.fillText(String(PALLETS_PER_DRY_ZONE - palletIndex), dryZoneMarker.x + DRY_ZONE_PALLET_LABEL_OFFSET_X + 36, palletY + 26);
+          }
           context.fillStyle = "#fcd34d";
           context.strokeStyle = "#b45309";
           context.lineWidth = 3;
-          context.fillRect(dryZoneMarker.x + 1160, y, 140, 76);
-          context.strokeRect(dryZoneMarker.x + 1160, y, 140, 76);
+          context.fillRect(dryZoneMarker.x + DRY_ZONE_LETTER_LABEL_OFFSET_X, y - 38, 140, 76);
+          context.strokeRect(dryZoneMarker.x + DRY_ZONE_LETTER_LABEL_OFFSET_X, y - 38, 140, 76);
           context.fillStyle = "#78350f";
           context.font = "900 56px system-ui, sans-serif";
           context.textAlign = "center";
           context.textBaseline = "middle";
-          context.fillText(label, dryZoneMarker.x + 1230, y + 39);
+          context.fillText(label, dryZoneMarker.x + DRY_ZONE_LETTER_LABEL_OFFSET_X + 70, y);
         }
         for (const product of allProducts) {
           const position = worldPosition(product);
@@ -476,7 +495,7 @@ export function CanvasViewport({ products, branchId, zone, dryZoneMarker, onDryZ
       const marker = activeMarker === "side" ? dryZoneMarker : dryTopZoneMarkers?.[activeMarker];
       if (!marker || marker.locked || overview) return;
       const currentScale = transformRef.current?.instance.transformState.scale ?? 1;
-      const rawPosition = clampMarkerPosition({ x: marker.x + event.delta.x / currentScale, y: marker.y + event.delta.y / currentScale });
+      const rawPosition = clampMarkerPosition({ x: marker.x + event.delta.x / currentScale, y: marker.y + event.delta.y / currentScale }, activeMarker === "side");
       const nextPosition = activeMarker === "side" ? rawPosition : {
         x: Math.max(
           DRY_TOP_ZONE_MARKER_LABELS.indexOf(activeMarker) > 0 ? (dryTopZoneMarkers?.[DRY_TOP_ZONE_MARKER_LABELS[DRY_TOP_ZONE_MARKER_LABELS.indexOf(activeMarker) - 1]]?.x ?? -Infinity) + TOP_MARKER_MIN_GAP : -Infinity,

@@ -1,7 +1,7 @@
 "use client";
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { DndContext, PointerSensor, type DragEndEvent, type DragMoveEvent, type DragStartEvent, useDraggable, useSensor, useSensors } from "@dnd-kit/core";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { DndContext, MouseSensor, PointerSensor, TouchSensor, type DragEndEvent, type DragMoveEvent, type DragStartEvent, useDraggable, useSensor, useSensors } from "@dnd-kit/core";
 import { TransformComponent, TransformWrapper, type ReactZoomPanPinchRef } from "react-zoom-pan-pinch";
 import type { CanvasProduct } from "@/lib/product-catalog/merge";
 import { useKeyboard } from "@/app/warehouse/hooks/useKeyboard";
@@ -29,6 +29,13 @@ const DRY_ZONE_LETTER_LABEL_OFFSET_X = 1230;
 type ZonedProduct = CanvasProduct & { zone: string };
 type Point = { x: number; y: number };
 type Camera = { scale: number; positionX: number; positionY: number };
+
+class PenSensor extends PointerSensor {
+  static activators = [{
+    eventName: "onPointerDown" as const,
+    handler: ({ nativeEvent }: ReactPointerEvent) => nativeEvent.pointerType === "pen",
+  }];
+}
 
 function downloadBlob(blob: Blob, filename: string) {
   const link = document.createElement("a");
@@ -161,7 +168,11 @@ export function CanvasViewport({ products, branchId, zone, dryZoneMarker, onDryZ
   ])].sort((a, b) => a === "cold" ? -1 : b === "cold" ? 1 : a.localeCompare(b)).join("|");
   const zones = useMemo(() => zoneKey ? zoneKey.split("|") : [zone], [zone, zoneKey]);
   const offsets = useMemo(() => zoneOffsets(branchId, zones), [branchId, zones]);
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
+  const sensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(PenSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 8 } }),
+  );
   const [scale, setScale] = useState(0.2);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; productId: number } | null>(null);
@@ -171,7 +182,7 @@ export function CanvasViewport({ products, branchId, zone, dryZoneMarker, onDryZ
   const [undoCount, setUndoCount] = useState(0);
   const [selectionBox, setSelectionBox] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
   const [dragPreview, setDragPreview] = useState<{ ids: number[]; x: number; y: number } | null>(null);
-  const [viewportVersion, setViewportVersion] = useState(0);
+  const [, refreshViewport] = useState(0);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const overviewCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
@@ -191,6 +202,8 @@ export function CanvasViewport({ products, branchId, zone, dryZoneMarker, onDryZ
   const didInitialFit = useRef(false);
   const middlePanStart = useRef<{ x: number; y: number; positionX: number; positionY: number } | null>(null);
   const markerDragActive = useRef<"side" | DryTopZoneMarkerLabel | null>(null);
+  const activeTouchPointers = useRef(new Set<number>());
+  const pinchOccurred = useRef(false);
   const overview = scale < NAME_VISIBLE_SCALE;
   const showDetails = scale >= DETAILS_VISIBLE_SCALE;
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
@@ -291,7 +304,7 @@ export function CanvasViewport({ products, branchId, zone, dryZoneMarker, onDryZ
     if (viewportFrame.current !== null) return;
     viewportFrame.current = requestAnimationFrame(() => {
       viewportFrame.current = null;
-      setViewportVersion((current) => current + 1);
+      refreshViewport((current) => current + 1);
     });
   }, []);
   const sameZoneSelection = useCallback((productId: number, shift: boolean) => {
@@ -575,7 +588,92 @@ export function CanvasViewport({ products, branchId, zone, dryZoneMarker, onDryZ
     }, 20);
   }, [allProducts, branchId, dryTopZoneMarkers, dryZoneMarker, offsets, settings.showFloorGrid, worldPosition, zones]);
 
+  const cancelSelection = useCallback(() => {
+    selectionStart.current = null;
+    selectionDragged.current = false;
+    selectionJustEnded.current = false;
+    setSelectionBox(null);
+  }, []);
+  const handleCanvasPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const target = event.target as HTMLElement;
+    if (!target.closest(".canvas-control")) searchInputRef.current?.blur();
+    if (event.pointerType === "touch") {
+      if (!activeTouchPointers.current.size) pinchOccurred.current = false;
+      activeTouchPointers.current.add(event.pointerId);
+      cancelSelection();
+      if (activeTouchPointers.current.size > 1) pinchOccurred.current = true;
+      return;
+    }
+    if (event.button === 1) {
+      event.preventDefault();
+      const transform = transformRef.current?.instance.transformState;
+      if (transform) middlePanStart.current = { x: event.clientX, y: event.clientY, positionX: transform.positionX, positionY: transform.positionY };
+      return;
+    }
+    if (!overview && event.button === 0 && !target.closest(".product-chip") && !target.closest(".zone-marker-strip") && !target.closest(".canvas-control")) {
+      const rect = event.currentTarget.getBoundingClientRect();
+      selectionStart.current = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+      selectionDragged.current = false;
+    }
+  }, [cancelSelection, overview]);
+  const handleCanvasPointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === "touch") return;
+    const middleStart = middlePanStart.current;
+    if (middleStart && transformRef.current) {
+      event.preventDefault();
+      const transform = transformRef.current.instance.transformState;
+      transformRef.current.setTransform(middleStart.positionX + event.clientX - middleStart.x, middleStart.positionY + event.clientY - middleStart.y, transform.scale, 0);
+      return;
+    }
+    if (!selectionStart.current) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const end = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    const width = Math.abs(end.x - selectionStart.current.x);
+    const height = Math.abs(end.y - selectionStart.current.y);
+    if (width > 3 || height > 3) selectionDragged.current = true;
+    setSelectionBox({ x: Math.min(selectionStart.current.x, end.x), y: Math.min(selectionStart.current.y, end.y), width, height });
+  }, []);
+  const handleCanvasPointerUp = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === "touch") {
+      activeTouchPointers.current.delete(event.pointerId);
+      cancelSelection();
+      return;
+    }
+    middlePanStart.current = null;
+    selectionJustEnded.current = selectionDragged.current;
+    if (selectionBox && selectionDragged.current && canvasRef.current) {
+      const canvas = canvasRef.current.getBoundingClientRect();
+      const ids = [...canvasRef.current.querySelectorAll<HTMLElement>(".product-chip")].filter((node) => {
+        const rect = node.getBoundingClientRect();
+        const left = rect.left - canvas.left;
+        const top = rect.top - canvas.top;
+        return left < selectionBox.x + selectionBox.width && left + rect.width > selectionBox.x && top < selectionBox.y + selectionBox.height && top + rect.height > selectionBox.y;
+      }).map((node) => Number(node.dataset.productId));
+      const first = allProducts.find((item) => item.productId === ids[0]);
+      setSelectedIds(first ? ids.filter((id) => allProducts.find((item) => item.productId === id)?.zone === first.zone) : []);
+    }
+    selectionStart.current = null;
+    setSelectionBox(null);
+  }, [allProducts, cancelSelection, selectionBox]);
+  const handleCanvasPointerCancel = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === "touch") activeTouchPointers.current.delete(event.pointerId);
+    middlePanStart.current = null;
+    markerDragActive.current = null;
+    cancelSelection();
+  }, [cancelSelection]);
+  const handleCanvasClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (pinchOccurred.current) return;
+    const target = event.target as HTMLElement;
+    if (!target.closest(".product-chip") && !target.closest(".zone-marker-strip") && !target.closest(".canvas-control")) {
+      setContextMenu(null);
+      setZoneMarkerContextMenu(null);
+      if (!selectionJustEnded.current) setSelectedIds([]);
+    }
+    selectionJustEnded.current = false;
+  }, []);
+
   return <DndContext sensors={sensors} autoScroll={false} onDragStart={(event: DragStartEvent) => {
+    if (pinchOccurred.current) return;
     const topLabel = typeof event.active.id === "string" && event.active.id.startsWith(DRY_TOP_ZONE_MARKER_DRAG_ID_PREFIX)
       ? event.active.id.slice(DRY_TOP_ZONE_MARKER_DRAG_ID_PREFIX.length) as DryTopZoneMarkerLabel : null;
     if (event.active.id === DRY_ZONE_MARKER_DRAG_ID || (topLabel && DRY_TOP_ZONE_MARKER_LABELS.includes(topLabel))) {
@@ -594,10 +692,12 @@ export function CanvasViewport({ products, branchId, zone, dryZoneMarker, onDryZ
     setSelectedIds(ids);
     setDragPreview({ ids, x: 0, y: 0 });
   }} onDragMove={(event: DragMoveEvent) => {
+    if (pinchOccurred.current) return;
     if (markerDragActive.current || event.active.id === DRY_ZONE_MARKER_DRAG_ID || (typeof event.active.id === "string" && event.active.id.startsWith(DRY_TOP_ZONE_MARKER_DRAG_ID_PREFIX))) return;
     const currentScale = transformRef.current?.instance.transformState.scale ?? 1;
     if (draggingIdsRef.current.length) setDragPreview({ ids: draggingIdsRef.current, x: event.delta.x / currentScale, y: event.delta.y / currentScale });
   }} onDragCancel={() => { markerDragActive.current = null; draggingIdsRef.current = []; setDragPreview(null); }} onDragEnd={(event: DragEndEvent) => {
+    if (pinchOccurred.current) { markerDragActive.current = null; draggingIdsRef.current = []; setDragPreview(null); return; }
     const topLabel = typeof event.active.id === "string" && event.active.id.startsWith(DRY_TOP_ZONE_MARKER_DRAG_ID_PREFIX)
       ? event.active.id.slice(DRY_TOP_ZONE_MARKER_DRAG_ID_PREFIX.length) as DryTopZoneMarkerLabel : null;
     const activeMarker = markerDragActive.current ?? (event.active.id === DRY_ZONE_MARKER_DRAG_ID ? "side" : topLabel && DRY_TOP_ZONE_MARKER_LABELS.includes(topLabel) ? topLabel : null);
@@ -655,26 +755,7 @@ export function CanvasViewport({ products, branchId, zone, dryZoneMarker, onDryZ
         return currentBand !== nextBand || Math.abs(current - state.scale) >= 0.12 ? state.scale : current;
       });
     }}>
-      {({ resetTransform }) => <div ref={canvasRef} className="relative h-full overflow-hidden bg-slate-200" onPointerDown={(event) => {
-        const target = event.target as HTMLElement;
-        if (!target.closest(".canvas-control")) searchInputRef.current?.blur();
-        if (event.button === 1) {
-          event.preventDefault();
-          const transform = transformRef.current?.instance.transformState;
-          if (transform) middlePanStart.current = { x: event.clientX, y: event.clientY, positionX: transform.positionX, positionY: transform.positionY };
-          return;
-        }
-        if (!overview && event.button === 0 && !target.closest(".product-chip") && !target.closest(".zone-marker-strip") && !target.closest(".canvas-control")) { const rect = event.currentTarget.getBoundingClientRect(); selectionStart.current = { x: event.clientX - rect.left, y: event.clientY - rect.top }; selectionDragged.current = false; }
-      }} onPointerMove={(event) => {
-        const middleStart = middlePanStart.current;
-        if (middleStart && transformRef.current) {
-          event.preventDefault();
-          const transform = transformRef.current.instance.transformState;
-          transformRef.current.setTransform(middleStart.positionX + event.clientX - middleStart.x, middleStart.positionY + event.clientY - middleStart.y, transform.scale, 0);
-          return;
-        }
-        if (!selectionStart.current) return; const rect = event.currentTarget.getBoundingClientRect(); const end = { x: event.clientX - rect.left, y: event.clientY - rect.top }; const width = Math.abs(end.x - selectionStart.current.x); const height = Math.abs(end.y - selectionStart.current.y); if (width > 3 || height > 3) selectionDragged.current = true; setSelectionBox({ x: Math.min(selectionStart.current.x, end.x), y: Math.min(selectionStart.current.y, end.y), width, height });
-      }} onPointerUp={() => { middlePanStart.current = null; selectionJustEnded.current = selectionDragged.current; if (selectionBox && selectionDragged.current && canvasRef.current) { const canvas = canvasRef.current.getBoundingClientRect(); const ids = [...canvasRef.current.querySelectorAll<HTMLElement>(".product-chip")].filter((node) => { const rect = node.getBoundingClientRect(); const left = rect.left - canvas.left; const top = rect.top - canvas.top; return left < selectionBox.x + selectionBox.width && left + rect.width > selectionBox.x && top < selectionBox.y + selectionBox.height && top + rect.height > selectionBox.y; }).map((node) => Number(node.dataset.productId)); const first = allProducts.find((item) => item.productId === ids[0]); setSelectedIds(first ? ids.filter((id) => allProducts.find((item) => item.productId === id)?.zone === first.zone) : []); } selectionStart.current = null; setSelectionBox(null); }} onPointerCancel={() => { middlePanStart.current = null; markerDragActive.current = null; selectionStart.current = null; selectionDragged.current = false; selectionJustEnded.current = false; setSelectionBox(null); }} onClick={(event) => { const target = event.target as HTMLElement; if (!target.closest(".product-chip") && !target.closest(".zone-marker-strip") && !target.closest(".canvas-control")) { setContextMenu(null); setZoneMarkerContextMenu(null); if (!selectionJustEnded.current) setSelectedIds([]); } selectionJustEnded.current = false; }} onContextMenu={(event) => { const target = event.target as HTMLElement; if (!target.closest(".product-chip") && !target.closest(".zone-marker-strip")) { event.preventDefault(); onRequestAdd(); } }}>
+      {({ resetTransform }) => <div ref={canvasRef} className="relative h-full overflow-hidden bg-slate-200" onPointerDown={handleCanvasPointerDown} onPointerMove={handleCanvasPointerMove} onPointerUp={handleCanvasPointerUp} onPointerCancel={handleCanvasPointerCancel} onClick={handleCanvasClick} onContextMenu={(event) => { const target = event.target as HTMLElement; if (!target.closest(".product-chip") && !target.closest(".zone-marker-strip")) { event.preventDefault(); onRequestAdd(); } }}>
         <div className="canvas-control absolute left-3 top-3 z-30 flex items-center gap-2 rounded-md border bg-white/95 p-2 text-xs shadow-sm"><span>{Math.round(scale * 100)}%</span><button className="underline" onClick={() => fitAll()}>Xem cả hai kho</button><button className="underline" onClick={() => resetTransform()}>Đặt lại</button><button className="underline" disabled={exporting !== null} onClick={() => exportWarehouseImage("png")}>{exporting === "png" ? "Đang xuất…" : "Ảnh PNG"}</button><button className="underline" disabled={exporting !== null} onClick={() => exportWarehouseImage("pdf")}>{exporting === "pdf" ? "Đang xuất…" : "PDF"}</button>{overview && <span className="text-slate-500">Zoom gần để kéo thả</span>}</div>
         <div className="canvas-control absolute right-3 top-3 z-30 flex w-64 items-center gap-2 rounded-md border bg-white/95 p-2 shadow-sm"><input ref={searchInputRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Tìm sản phẩm…" className="min-w-0 flex-1 bg-transparent text-sm outline-none" />{matches && <span className="text-xs text-slate-500">{matches.size}</span>}</div>
         {notice && <div className="pointer-events-none absolute left-1/2 top-14 z-40 -translate-x-1/2 rounded bg-red-600 px-3 py-2 text-sm font-semibold text-white shadow">{notice}</div>}

@@ -5,15 +5,20 @@ import Link from "next/link";
 import { WarehouseSettingsButton } from "@/app/warehouse/components/WarehouseSettings";
 import { WAREHOUSES } from "@/lib/warehouse/branches";
 
-export function WarehouseHeader({ warehouseId, warehouseName }: { warehouseId: number; warehouseName: string }) {
+export function WarehouseHeader({ warehouseId, warehouseName, onAdd, onOpenChange }: { warehouseId: number; warehouseName: string; onAdd: () => void; onOpenChange: (open: boolean) => void }) {
   const [open, setOpen] = useState(false);
+  const toggleMenu = () => setOpen((current) => {
+    onOpenChange(!current);
+    return !current;
+  });
 
   return (
-    <header className="sticky top-0 z-40 shrink-0 border-b bg-white shadow-sm">
-      <div className="flex h-11 items-center px-3 sm:px-5">
-        <button type="button" aria-label={open ? "Thu gọn menu" : "Mở menu"} aria-expanded={open} className="grid size-8 place-items-center rounded-md text-lg font-semibold text-slate-700 hover:bg-slate-100" onClick={() => setOpen((current) => !current)}>{open ? "⌃" : "⌄"}</button>
+    <header className="absolute left-1 top-1 z-40">
+      <div className="flex items-center gap-1">
+        <button type="button" aria-label={open ? "Thu gọn menu" : "Mở menu"} aria-expanded={open} className="grid size-7 place-items-center rounded-md border bg-white text-base font-semibold leading-none text-slate-700 shadow-sm hover:bg-slate-100" onClick={toggleMenu}>{open ? "⌃" : "⌄"}</button>
+        <button type="button" aria-label="Thêm sản phẩm" title="Thêm sản phẩm" className="grid size-7 place-items-center rounded-md bg-blue-600 text-lg font-semibold leading-none text-white shadow-sm hover:bg-blue-700" onClick={onAdd}>+</button>
       </div>
-      {open && <div className="flex flex-wrap items-center gap-2 border-t px-3 py-2 sm:px-5">
+      {open && <div className="absolute left-0 top-8 flex w-[min(26rem,calc(100vw-0.5rem))] flex-wrap items-center gap-2 rounded-md border bg-white p-2 shadow-lg">
         <div className="min-w-0 grow">
           <p className="truncate text-sm font-semibold text-slate-900">Sơ đồ kho · {warehouseName}</p>
           <p className="truncate text-xs text-slate-500">Powered by Khoa Trần</p>

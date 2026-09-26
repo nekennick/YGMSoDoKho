@@ -4,16 +4,18 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { WarehouseDataResult } from "@/lib/warehouse/initial-data";
 import { CanvasViewport } from "@/app/warehouse/components/CanvasViewport";
 import { AddProductDialog } from "@/app/warehouse/components/AddProductDialog";
+import { WarehouseHeader } from "@/app/warehouse/components/WarehouseHeader";
 import { useWarehouseSettings } from "@/app/warehouse/components/WarehouseSettings";
 import type { CanvasProduct } from "@/lib/product-catalog/merge";
 import type { DryTopZoneMarkerLabel, ZoneMarkerLayout } from "@/lib/warehouse/zone-markers";
 
-export function WarehouseWorkspace({ result, branchId, zone }: { result: WarehouseDataResult; branchId: number; zone: string }) {
+export function WarehouseWorkspace({ result, branchId, zone, warehouseName }: { result: WarehouseDataResult; branchId: number; zone: string; warehouseName: string }) {
   const { settings } = useWarehouseSettings();
   const [canvasProducts, setCanvasProducts] = useState(result.ok ? result.data.canvasProducts : []);
   const [availableProducts, setAvailableProducts] = useState(result.ok ? result.data.availableProducts : []);
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [focusProductId, setFocusProductId] = useState<number | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [dryZoneMarker, setDryZoneMarker] = useState<ZoneMarkerLayout | null>(result.ok ? result.data.dryZoneMarker : null);
   const [dryTopZoneMarkers, setDryTopZoneMarkers] = useState<Record<DryTopZoneMarkerLabel, ZoneMarkerLayout> | null>(result.ok ? result.data.dryTopZoneMarkers : null);
   const centerPositionRef = useRef<(() => { x: number; y: number }) | null>(null);
@@ -76,15 +78,14 @@ export function WarehouseWorkspace({ result, branchId, zone }: { result: Warehou
     setFocusProductId(settings.focusNewProducts ? products[0]?.productId ?? null : null);
   };
   return (
-    <main className="flex min-h-0 flex-1 flex-col overflow-hidden overscroll-none">
-      <div className="sticky top-0 z-30 flex shrink-0 flex-wrap items-center gap-2 border-b bg-white px-4 py-2 text-sm">
-        <button type="button" aria-label="Thêm sản phẩm" title="Thêm sản phẩm" className="grid size-8 place-items-center rounded-md bg-blue-600 text-lg font-semibold leading-none text-white shadow-sm hover:bg-blue-700 md:hidden" onClick={() => setAddDialogOpen(true)}>+</button>
-        <AddProductDialog products={availableProducts} branchId={branchId} zone={zone} getPosition={() => centerPositionRef.current?.() ?? { x: 400, y: 250 }} open={addDialogOpen} onOpenChange={setAddDialogOpen} onAdded={addProducts} />
-        <span className="font-medium text-slate-900">{canvasProducts.length} SP</span>
-      </div>
-      <section className="relative min-h-0 flex-1 overflow-hidden">
-        <CanvasViewport products={canvasProducts} branchId={branchId} zone={zone} dryZoneMarker={dryZoneMarker} onDryZoneMarkerChange={setDryZoneMarker} dryTopZoneMarkers={dryTopZoneMarkers} onDryTopZoneMarkersChange={setDryTopZoneMarkers} onProductsChange={setCanvasProducts} onProductsDeleted={restoreDeletedProducts} onProductsRestored={removeRestoredProductsFromAvailable} onRequestAdd={() => setAddDialogOpen(true)} onRegisterCenterPosition={registerCenterPosition} focusProductId={focusProductId} />
-      </section>
-    </main>
+    <>
+      <WarehouseHeader warehouseId={branchId} warehouseName={warehouseName} onAdd={() => setAddDialogOpen(true)} onOpenChange={setMenuOpen} />
+      <AddProductDialog products={availableProducts} branchId={branchId} zone={zone} getPosition={() => centerPositionRef.current?.() ?? { x: 400, y: 250 }} open={addDialogOpen} onOpenChange={setAddDialogOpen} onAdded={addProducts} />
+      <main className="flex min-h-0 flex-1 flex-col overflow-hidden overscroll-none">
+        <section className="relative min-h-0 flex-1 overflow-hidden">
+          <CanvasViewport products={canvasProducts} branchId={branchId} zone={zone} dryZoneMarker={dryZoneMarker} onDryZoneMarkerChange={setDryZoneMarker} dryTopZoneMarkers={dryTopZoneMarkers} onDryTopZoneMarkersChange={setDryTopZoneMarkers} onProductsChange={setCanvasProducts} onProductsDeleted={restoreDeletedProducts} onProductsRestored={removeRestoredProductsFromAvailable} onRequestAdd={() => setAddDialogOpen(true)} onRegisterCenterPosition={registerCenterPosition} focusProductId={focusProductId} menuOpen={menuOpen} />
+        </section>
+      </main>
+    </>
   );
 }

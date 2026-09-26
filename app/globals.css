@@ -9,6 +9,10 @@
 
 * { box-sizing: border-box; }
 html, body { min-height: 100%; }
+
+@media (pointer: coarse) {
+  .canvas-desktop-controls { display: none !important; }
+}
 body {
   margin: 0;
   background: rgb(var(--background));

@@ -2,7 +2,6 @@ import { WarehouseWorkspace } from "@/app/warehouse/components/WarehouseWorkspac
 import { loadWarehouseInitialData } from "@/lib/warehouse/initial-data";
 import { getWarehouse, getWarehouseZone } from "@/lib/warehouse/branches";
 import { WarehouseSettingsProvider } from "@/app/warehouse/components/WarehouseSettings";
-import { WarehouseHeader } from "@/app/warehouse/components/WarehouseHeader";
 
 export const dynamic = "force-dynamic";
 
@@ -14,8 +13,7 @@ export default async function WarehousePage({ searchParams }: { searchParams: Pr
   return (
     <WarehouseSettingsProvider>
       <main className="flex h-dvh min-h-0 flex-col overflow-hidden overscroll-none bg-slate-100">
-        <WarehouseHeader warehouseId={warehouse.id} warehouseName={warehouse.name} />
-        <WarehouseWorkspace key={`${warehouse.id}:${zone}`} result={result} branchId={warehouse.id} zone={zone} />
+        <WarehouseWorkspace key={`${warehouse.id}:${zone}`} result={result} branchId={warehouse.id} zone={zone} warehouseName={warehouse.name} />
       </main>
     </WarehouseSettingsProvider>
   );

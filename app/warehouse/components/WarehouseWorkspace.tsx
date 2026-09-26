@@ -78,11 +78,9 @@ export function WarehouseWorkspace({ result, branchId, zone }: { result: Warehou
   return (
     <main className="flex min-h-0 flex-1 flex-col overflow-hidden overscroll-none">
       <div className="sticky top-0 z-30 flex shrink-0 flex-wrap items-center gap-2 border-b bg-white px-4 py-2 text-sm">
-        <button type="button" className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-blue-700 md:hidden" onClick={() => setAddDialogOpen(true)}>+ Thêm sản phẩm</button>
+        <button type="button" aria-label="Thêm sản phẩm" title="Thêm sản phẩm" className="grid size-8 place-items-center rounded-md bg-blue-600 text-lg font-semibold leading-none text-white shadow-sm hover:bg-blue-700 md:hidden" onClick={() => setAddDialogOpen(true)}>+</button>
         <AddProductDialog products={availableProducts} branchId={branchId} zone={zone} getPosition={() => centerPositionRef.current?.() ?? { x: 400, y: 250 }} open={addDialogOpen} onOpenChange={setAddDialogOpen} onAdded={addProducts} />
-        <span className="font-medium text-slate-900">{canvasProducts.length} sản phẩm trên sơ đồ kho</span>
-        <span className="text-slate-400">·</span>
-        <span className="text-slate-500">{availableProducts.length} sản phẩm có thể thêm</span>
+        <span className="font-medium text-slate-900">{canvasProducts.length} SP</span>
       </div>
       <section className="relative min-h-0 flex-1 overflow-hidden">
         <CanvasViewport products={canvasProducts} branchId={branchId} zone={zone} dryZoneMarker={dryZoneMarker} onDryZoneMarkerChange={setDryZoneMarker} dryTopZoneMarkers={dryTopZoneMarkers} onDryTopZoneMarkersChange={setDryTopZoneMarkers} onProductsChange={setCanvasProducts} onProductsDeleted={restoreDeletedProducts} onProductsRestored={removeRestoredProductsFromAvailable} onRequestAdd={() => setAddDialogOpen(true)} onRegisterCenterPosition={registerCenterPosition} focusProductId={focusProductId} />

@@ -24,10 +24,11 @@ const TOP_MARKER_MIN_GAP = 170;
 const PALLETS_PER_DRY_ZONE = 5;
 const DRY_ZONE_PALLET_HEIGHT = DRY_ZONE_MARKER_SPACING / PALLETS_PER_DRY_ZONE;
 const DRY_ZONE_PALLET_LABEL_OFFSET_X = 1150;
-const DRY_ZONE_LETTER_LABEL_OFFSET_X = 1250;
+const DRY_ZONE_LETTER_LABEL_OFFSET_X = 1230;
 
 type ZonedProduct = CanvasProduct & { zone: string };
 type Point = { x: number; y: number };
+type Camera = { scale: number; positionX: number; positionY: number };
 
 function downloadBlob(blob: Blob, filename: string) {
   const link = document.createElement("a");
@@ -170,9 +171,15 @@ export function CanvasViewport({ products, branchId, zone, dryZoneMarker, onDryZ
   const [undoCount, setUndoCount] = useState(0);
   const [selectionBox, setSelectionBox] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
   const [dragPreview, setDragPreview] = useState<{ ids: number[]; x: number; y: number } | null>(null);
+  const [viewportVersion, setViewportVersion] = useState(0);
   const canvasRef = useRef<HTMLDivElement | null>(null);
+  const overviewCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const transformRef = useRef<ReactZoomPanPinchRef | null>(null);
+  const overviewPlanCanvases = useRef(new Map<string, HTMLCanvasElement>());
+  const overviewCamera = useRef<Camera>({ scale: 0.2, positionX: 0, positionY: 0 });
+  const overviewFrame = useRef<number | null>(null);
+  const viewportFrame = useRef<number | null>(null);
   const undoHistory = useRef<ZonedProduct[][]>([]);
   const pendingMutations = useRef(new Set<Promise<unknown>>());
   const selectionStart = useRef<Point | null>(null);
@@ -209,6 +216,84 @@ export function CanvasViewport({ products, branchId, zone, dryZoneMarker, onDryZ
     return null;
   }, [branchId, offsets, zones]);
   const worldPositions = useMemo(() => new Map(allProducts.map((item) => [item.productId, worldPosition(item)])), [allProducts, worldPosition]);
+  const drawOverview = useCallback((camera: Camera) => {
+    const canvas = overviewCanvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    const pixelRatio = Math.min(window.devicePixelRatio || 1, 1.5);
+    const width = Math.round(rect.width * pixelRatio);
+    const height = Math.round(rect.height * pixelRatio);
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
+    }
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.clearRect(0, 0, width, height);
+    context.fillStyle = "#e2e8f0";
+    context.fillRect(0, 0, width, height);
+    context.setTransform(pixelRatio * camera.scale, 0, 0, pixelRatio * camera.scale, pixelRatio * camera.positionX, pixelRatio * camera.positionY);
+
+    for (const targetZone of zones) {
+      const plan = getWarehouseFloorPlan(branchId, targetZone);
+      if (!plan) continue;
+      const cacheKey = `${plan.id}:${settings.showFloorGrid}`;
+      let planCanvas = overviewPlanCanvases.current.get(cacheKey);
+      if (!planCanvas) {
+        planCanvas = document.createElement("canvas");
+        drawFloorPlan(planCanvas, plan, settings.showFloorGrid, 900_000);
+        overviewPlanCanvases.current.set(cacheKey, planCanvas);
+      }
+      const offset = offsets.get(targetZone) ?? { x: 0, y: 0 };
+      const planRect = getFloorPlanCanvasRect(plan);
+      context.drawImage(planCanvas, plan.canvasX + offset.x, plan.canvasY + offset.y, planRect.width, planRect.height);
+    }
+
+    if (dryTopZoneMarkers) {
+      context.lineWidth = 3;
+      context.strokeStyle = "#b45309";
+      for (const label of DRY_TOP_ZONE_MARKER_LABELS) {
+        const marker = dryTopZoneMarkers[label];
+        context.beginPath();
+        context.moveTo(marker.x + 70, marker.y + 118);
+        context.lineTo(marker.x + 70, marker.y + 6518);
+        context.stroke();
+      }
+    }
+    if (dryZoneMarker) {
+      context.lineWidth = 3;
+      context.strokeStyle = "#b45309";
+      for (const [index] of DRY_ZONE_MARKER_LABELS.entries()) {
+        const y = Math.round(dryZoneMarker.y / DRY_ZONE_PALLET_HEIGHT) * DRY_ZONE_PALLET_HEIGHT + index * DRY_ZONE_MARKER_SPACING;
+        context.beginPath();
+        context.moveTo(dryZoneMarker.x, y);
+        context.lineTo(dryZoneMarker.x + 1120, y);
+        context.stroke();
+      }
+    }
+    for (const product of allProducts) {
+      const position = worldPositions.get(product.productId) ?? worldPosition(product);
+      context.fillStyle = product.color;
+      context.fillRect(position.x, position.y, PRODUCT_CHIP_WIDTH, PRODUCT_CHIP_HEIGHT);
+    }
+  }, [allProducts, branchId, dryTopZoneMarkers, dryZoneMarker, offsets, settings.showFloorGrid, worldPosition, worldPositions, zones]);
+  const scheduleOverviewDraw = useCallback((camera: Camera) => {
+    overviewCamera.current = camera;
+    if (overviewFrame.current !== null) return;
+    overviewFrame.current = requestAnimationFrame(() => {
+      overviewFrame.current = null;
+      drawOverview(overviewCamera.current);
+    });
+  }, [drawOverview]);
+  const scheduleViewportRefresh = useCallback(() => {
+    if (viewportFrame.current !== null) return;
+    viewportFrame.current = requestAnimationFrame(() => {
+      viewportFrame.current = null;
+      setViewportVersion((current) => current + 1);
+    });
+  }, []);
   const sameZoneSelection = useCallback((productId: number, shift: boolean) => {
     const product = allProducts.find((item) => item.productId === productId);
     if (!product) return;
@@ -334,6 +419,18 @@ export function CanvasViewport({ products, branchId, zone, dryZoneMarker, onDryZ
     const frame = requestAnimationFrame(() => fitAll(0));
     return () => cancelAnimationFrame(frame);
   }, [fitAll]);
+  useEffect(() => {
+    overviewPlanCanvases.current.clear();
+  }, [branchId, settings.showFloorGrid]);
+  useEffect(() => {
+    if (!overview) return;
+    const transform = transformRef.current?.instance.transformState;
+    scheduleOverviewDraw(transform ? { scale: transform.scale, positionX: transform.positionX, positionY: transform.positionY } : overviewCamera.current);
+  }, [overview, scheduleOverviewDraw]);
+  useEffect(() => () => {
+    if (overviewFrame.current !== null) cancelAnimationFrame(overviewFrame.current);
+    if (viewportFrame.current !== null) cancelAnimationFrame(viewportFrame.current);
+  }, []);
   useEffect(() => { undoHistory.current = []; setUndoCount(0); }, [branchId, zone]);
   useEffect(() => { if (!notice) return; const timer = window.setTimeout(() => setNotice(null), 2600); return () => window.clearTimeout(timer); }, [notice]);
   useEffect(() => { if (!onRegisterCenterPosition) return; onRegisterCenterPosition(() => ({ x: 400, y: 250 })); return () => onRegisterCenterPosition(null); }, [onRegisterCenterPosition]);
@@ -349,7 +446,21 @@ export function CanvasViewport({ products, branchId, zone, dryZoneMarker, onDryZ
     transformRef.current.setTransform(rect.width / 2 - (world.x + PRODUCT_CHIP_WIDTH / 2) * current.scale, rect.height / 2 - (world.y + PRODUCT_CHIP_HEIGHT / 2) * current.scale, Math.max(current.scale, NAME_VISIBLE_SCALE), 250);
   }, [allProducts, focusProductId, worldPosition]);
   useEffect(() => { const listener = (event: KeyboardEvent) => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") { event.preventDefault(); undo(); return; } if ((event.key === "Delete" || event.key === "Backspace") && selectedIds.length) { event.preventDefault(); removeSelected(); } }; window.addEventListener("keydown", listener); return () => window.removeEventListener("keydown", listener); }, [removeSelected, selectedIds.length, undo]);
-  const visibleProducts = useMemo(() => allProducts, [allProducts]);
+  const visibleProducts = (() => {
+    if (overview) return [];
+    const viewport = canvasRef.current?.getBoundingClientRect();
+    const transform = transformRef.current?.instance.transformState;
+    if (!viewport || !transform) return allProducts;
+    const padding = 500;
+    const left = (-transform.positionX) / transform.scale - padding;
+    const top = (-transform.positionY) / transform.scale - padding;
+    const right = (viewport.width - transform.positionX) / transform.scale + padding;
+    const bottom = (viewport.height - transform.positionY) / transform.scale + padding;
+    return allProducts.filter((product) => {
+      const position = worldPositions.get(product.productId) ?? worldPosition(product);
+      return position.x < right && position.x + PRODUCT_CHIP_WIDTH > left && position.y < bottom && position.y + PRODUCT_CHIP_HEIGHT > top;
+    });
+  })();
   const [exporting, setExporting] = useState<"png" | "pdf" | null>(null);
   const exportWarehouseImage = useCallback((format: "png" | "pdf") => {
     if (window.matchMedia("(max-width: 1024px), (pointer: coarse)").matches) {
@@ -534,7 +645,16 @@ export function CanvasViewport({ products, branchId, zone, dryZoneMarker, onDryZ
       : item);
     updatePositions(next, ids);
   }}>
-    <TransformWrapper ref={transformRef} minScale={0.2} maxScale={4} limitToBounds={false} centerZoomedOut={false} wheel={{ activationKeys: ["Control"], step: 0.02 }} panning={{ disabled: !spacePressed, excluded: ["product-chip", "canvas-control"] }} doubleClick={{ disabled: true }} onTransformed={(_, state) => setScale((current) => Math.abs(current - state.scale) > 0.01 ? state.scale : current)}>
+    <TransformWrapper ref={transformRef} minScale={0.2} maxScale={4} limitToBounds={false} centerZoomedOut={false} wheel={{ activationKeys: ["Control"], step: 0.02 }} panning={{ disabled: !spacePressed, excluded: ["product-chip", "canvas-control"] }} doubleClick={{ disabled: true }} onTransformed={(_, state) => {
+      const camera = { scale: state.scale, positionX: state.positionX, positionY: state.positionY };
+      if (state.scale < NAME_VISIBLE_SCALE) scheduleOverviewDraw(camera);
+      scheduleViewportRefresh();
+      setScale((current) => {
+        const currentBand = current < NAME_VISIBLE_SCALE ? 0 : current < DETAILS_VISIBLE_SCALE ? 1 : 2;
+        const nextBand = state.scale < NAME_VISIBLE_SCALE ? 0 : state.scale < DETAILS_VISIBLE_SCALE ? 1 : 2;
+        return currentBand !== nextBand || Math.abs(current - state.scale) >= 0.12 ? state.scale : current;
+      });
+    }}>
       {({ resetTransform }) => <div ref={canvasRef} className="relative h-full overflow-hidden bg-slate-200" onPointerDown={(event) => {
         const target = event.target as HTMLElement;
         if (!target.closest(".canvas-control")) searchInputRef.current?.blur();
@@ -559,7 +679,8 @@ export function CanvasViewport({ products, branchId, zone, dryZoneMarker, onDryZ
         <div className="canvas-control absolute right-3 top-3 z-30 flex w-64 items-center gap-2 rounded-md border bg-white/95 p-2 shadow-sm"><input ref={searchInputRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Tìm sản phẩm…" className="min-w-0 flex-1 bg-transparent text-sm outline-none" />{matches && <span className="text-xs text-slate-500">{matches.size}</span>}</div>
         {notice && <div className="pointer-events-none absolute left-1/2 top-14 z-40 -translate-x-1/2 rounded bg-red-600 px-3 py-2 text-sm font-semibold text-white shadow">{notice}</div>}
         {selectionBox && <div className="pointer-events-none absolute z-20 border border-blue-500 bg-blue-400/20" style={{ left: selectionBox.x, top: selectionBox.y, width: selectionBox.width, height: selectionBox.height }} />}
-        <TransformComponent wrapperClass="!h-full !w-full" contentClass="!h-full !w-full"><div className="relative" style={{ width: CANVAS_WIDTH, height: CANVAS_HEIGHT }}>
+        <canvas ref={overviewCanvasRef} aria-hidden className={`pointer-events-none absolute inset-0 z-10 h-full w-full ${overview ? "" : "hidden"}`} />
+        <TransformComponent wrapperClass="!h-full !w-full" contentClass="!h-full !w-full">{overview ? <div style={{ width: 1, height: 1 }} /> : <div className="relative" style={{ width: CANVAS_WIDTH, height: CANVAS_HEIGHT }}>
           {zones.map((targetZone) => { const plan = getWarehouseFloorPlan(branchId, targetZone); return plan ? <WarehouseFloorPlan key={targetZone} plan={plan} offset={offsets.get(targetZone)} infoOffset={targetZone === "dry" && zones.includes("cold") ? { x: 1660, y: 0 } : undefined} /> : null; })}
           {zones.includes("cold") && zones.includes("dry") && (
             <div className="pointer-events-none absolute z-0 text-center text-slate-500" aria-hidden="true">
@@ -594,8 +715,8 @@ export function CanvasViewport({ products, branchId, zone, dryZoneMarker, onDryZ
           </aside>
           {dryTopZoneMarkers && getWarehouseFloorPlan(branchId, "dry") && DRY_TOP_ZONE_MARKER_LABELS.map((label) => <TopZoneMarker key={label} label={label} layout={dryTopZoneMarkers[label]} scale={scale} disabled={dryTopZoneMarkers[label].locked || overview || spacePressed} onContextMenu={(event) => { event.preventDefault(); setContextMenu(null); setZoneMarkerContextMenu({ x: event.clientX, y: event.clientY, marker: label }); }} />)}
           {dryZoneMarker && getWarehouseFloorPlan(branchId, "dry") && <ZoneMarkerStrip layout={dryZoneMarker} scale={scale} disabled={dryZoneMarker.locked || overview || spacePressed} onContextMenu={(event) => { event.preventDefault(); setContextMenu(null); setZoneMarkerContextMenu({ x: event.clientX, y: event.clientY, marker: "side" }); }} />}
-          {visibleProducts.map((product) => <ProductChip key={product.productId} product={product} world={worldPositions.get(product.productId) ?? { x: product.x, y: product.y }} scale={scale} selected={selectedSet.has(product.productId)} disabled={overview || spacePressed} overview={overview} showDetails={showDetails} dimmed={matches !== null && !matches.has(product.productId)} showInventory={settings.showInventory} groupDelta={dragPreview?.ids.includes(product.productId) ? { x: dragPreview.x, y: dragPreview.y } : null} onSelect={sameZoneSelection} onContextMenu={openContextMenu} />)}
-        </div></TransformComponent>
+          {visibleProducts.map((product) => <ProductChip key={product.productId} product={product} world={worldPositions.get(product.productId) ?? { x: product.x, y: product.y }} scale={scale} selected={selectedSet.has(product.productId)} disabled={spacePressed} overview={false} showDetails={showDetails} dimmed={matches !== null && !matches.has(product.productId)} showInventory={settings.showInventory} groupDelta={dragPreview?.ids.includes(product.productId) ? { x: dragPreview.x, y: dragPreview.y } : null} onSelect={sameZoneSelection} onContextMenu={openContextMenu} />)}
+        </div>}</TransformComponent>
       </div>}
     </TransformWrapper>
     {contextMenu && <div className="fixed z-50 min-w-52 rounded-md border bg-white py-1 text-sm shadow-lg" style={{ left: contextMenu.x, top: contextMenu.y }}><button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:text-slate-400" disabled={!undoCount} onClick={undo}>Hoàn tác (Ctrl+Z){undoCount ? ` · ${undoCount}` : ""}</button><div className="my-1 border-t" /><button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:text-slate-400" disabled={selectedProducts.length < 2} onClick={() => group(crypto.randomUUID())}>Group</button><button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:text-slate-400" disabled={!selectedProducts.some((item) => item.groupId)} onClick={() => group(null)}>Ungroup</button><div className="my-1 border-t" /><div className="grid grid-cols-4 gap-2 px-3 py-2">{CHIP_COLORS.map((color) => <button key={color} aria-label={`Đổi màu ${color}`} className="h-7 rounded ring-1 ring-slate-300 hover:scale-110" style={{ backgroundColor: color }} onClick={() => changeColor(color)} />)}</div><div className="my-1 border-t" /><button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:text-slate-400" disabled={selectedProducts.length < 2} onClick={() => arrange("vertical")}>Xếp dọc, cách nhau 5px</button><button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:text-slate-400" disabled={selectedProducts.length < 2} onClick={() => arrange("horizontal")}>Xếp ngang, cách nhau 5px</button><button className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 disabled:text-slate-400" disabled={selectedProducts.length < 2} onClick={() => arrange("grid")}>Sắp xếp theo lưới 5px</button><button className="block w-full px-3 py-1.5 text-left text-red-600 hover:bg-red-50" onClick={removeSelected}>Xóa</button></div>}

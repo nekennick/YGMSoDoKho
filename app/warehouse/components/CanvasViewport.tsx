@@ -110,8 +110,12 @@ function zoneOffsets(branchId: number, zones: readonly string[]) {
 const ProductChip = memo(function ProductChip({ product, world, scale, selected, disabled, overview, showDetails, dimmed, showInventory, groupDelta, onSelect, onTouchSelect, onContextMenu }: { product: ZonedProduct; world: Point; scale: number; selected: boolean; disabled: boolean; overview: boolean; showDetails: boolean; dimmed: boolean; showInventory: boolean; groupDelta: Point | null; onSelect: (productId: number, shift: boolean) => void; onTouchSelect: (productId: number) => void; onContextMenu: (productId: number, event: React.MouseEvent) => void }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: product.productId, disabled });
   const ignoreTouchClick = useRef(false);
-  const dx = isDragging ? (transform?.x ?? 0) / scale : (groupDelta?.x ?? 0);
-  const dy = isDragging ? (transform?.y ?? 0) / scale : (groupDelta?.y ?? 0);
+  // All chips in a multi-selection must use the same React-driven preview
+  // delta. Mixing dnd-kit's transform for the active chip with state updates
+  // for the other chips makes them render on different frames and appear to
+  // move at different speeds.
+  const dx = groupDelta?.x ?? (isDragging ? (transform?.x ?? 0) / scale : 0);
+  const dy = groupDelta?.y ?? (isDragging ? (transform?.y ?? 0) / scale : 0);
   if (overview) {
     return <div title={product.name} data-product-id={product.productId} className={`product-chip absolute h-10 w-[250px] rounded-md border border-white/70 shadow-sm ${selected ? "ring-4 ring-yellow-300" : ""} ${dimmed ? "opacity-20" : "opacity-95"}`} style={{ left: world.x, top: world.y, backgroundColor: product.color }} />;
   }

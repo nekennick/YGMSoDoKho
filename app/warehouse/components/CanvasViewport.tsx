@@ -107,15 +107,16 @@ function zoneOffsets(branchId: number, zones: readonly string[]) {
   return offsets;
 }
 
-const ProductChip = memo(function ProductChip({ product, world, scale, selected, disabled, overview, showDetails, dimmed, showInventory, groupDelta, onSelect, onContextMenu }: { product: ZonedProduct; world: Point; scale: number; selected: boolean; disabled: boolean; overview: boolean; showDetails: boolean; dimmed: boolean; showInventory: boolean; groupDelta: Point | null; onSelect: (productId: number, shift: boolean) => void; onContextMenu: (productId: number, event: React.MouseEvent) => void }) {
+const ProductChip = memo(function ProductChip({ product, world, scale, selected, disabled, overview, showDetails, dimmed, showInventory, groupDelta, onSelect, onTouchSelect, onContextMenu }: { product: ZonedProduct; world: Point; scale: number; selected: boolean; disabled: boolean; overview: boolean; showDetails: boolean; dimmed: boolean; showInventory: boolean; groupDelta: Point | null; onSelect: (productId: number, shift: boolean) => void; onTouchSelect: (productId: number) => void; onContextMenu: (productId: number, event: React.MouseEvent) => void }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: product.productId, disabled });
+  const ignoreTouchClick = useRef(false);
   const dx = isDragging ? (transform?.x ?? 0) / scale : (groupDelta?.x ?? 0);
   const dy = isDragging ? (transform?.y ?? 0) / scale : (groupDelta?.y ?? 0);
   if (overview) {
     return <div title={product.name} data-product-id={product.productId} className={`product-chip absolute h-10 w-[250px] rounded-md border border-white/70 shadow-sm ${selected ? "ring-4 ring-yellow-300" : ""} ${dimmed ? "opacity-20" : "opacity-95"}`} style={{ left: world.x, top: world.y, backgroundColor: product.color }} />;
   }
   return (
-    <div ref={setNodeRef} {...listeners} {...attributes} data-product-id={product.productId} title={product.name} onClick={(event) => onSelect(product.productId, event.shiftKey)} onContextMenu={(event) => onContextMenu(product.productId, event)}
+    <div ref={setNodeRef} {...listeners} {...attributes} data-product-id={product.productId} title={product.name} onPointerUp={(event) => { if (event.pointerType === "touch") { ignoreTouchClick.current = true; onTouchSelect(product.productId); window.setTimeout(() => { ignoreTouchClick.current = false; }, 0); } }} onClick={(event) => { if (ignoreTouchClick.current) { ignoreTouchClick.current = false; return; } onSelect(product.productId, event.shiftKey); }} onContextMenu={(event) => onContextMenu(product.productId, event)}
       className={`product-chip absolute flex h-10 w-[250px] touch-none items-center overflow-hidden rounded-lg border px-3 text-3xl font-medium text-white shadow-sm ${selected ? "border-yellow-300 ring-4 ring-yellow-300/80 ring-offset-2" : product.groupId ? "border-violet-100 ring-2 ring-violet-300/80" : "border-white/60"} ${dimmed ? "opacity-25" : ""}`}
       style={{ left: world.x, top: world.y, backgroundColor: product.color, transform: isDragging || groupDelta ? `translate(${dx}px, ${dy}px)` : undefined, zIndex: isDragging ? 20 : 1 }}>
       <span className="min-w-0 flex-1 truncate">{product.name}</span>
@@ -182,6 +183,7 @@ export function CanvasViewport({ products, branchId, zone, dryZoneMarker, onDryZ
   const [undoCount, setUndoCount] = useState(0);
   const [selectionBox, setSelectionBox] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
   const [dragPreview, setDragPreview] = useState<{ ids: number[]; x: number; y: number } | null>(null);
+  const [touchMultiSelect, setTouchMultiSelect] = useState(false);
   const [, refreshViewport] = useState(0);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const overviewCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -204,6 +206,7 @@ export function CanvasViewport({ products, branchId, zone, dryZoneMarker, onDryZ
   const markerDragActive = useRef<"side" | DryTopZoneMarkerLabel | null>(null);
   const activeTouchPointers = useRef(new Set<number>());
   const pinchOccurred = useRef(false);
+  const touchDragActive = useRef(false);
   const overview = scale < NAME_VISIBLE_SCALE;
   const showDetails = scale >= DETAILS_VISIBLE_SCALE;
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
@@ -316,6 +319,16 @@ export function CanvasViewport({ products, branchId, zone, dryZoneMarker, onDryZ
       return compatible.includes(productId) ? compatible.filter((id) => id !== productId) : [...compatible, productId];
     });
   }, [allProducts]);
+  const touchSelection = useCallback((productId: number) => {
+    if (pinchOccurred.current || touchDragActive.current) return;
+    const product = allProducts.find((item) => item.productId === productId);
+    if (!product) return;
+    setSelectedIds((current) => {
+      const compatible = current.filter((id) => allProducts.find((item) => item.productId === id)?.zone === product.zone);
+      if (!touchMultiSelect) return [productId];
+      return compatible.includes(productId) ? compatible.filter((id) => id !== productId) : [...compatible, productId];
+    });
+  }, [allProducts, touchMultiSelect]);
   const openContextMenu = useCallback((productId: number, event: React.MouseEvent) => {
     event.preventDefault();
     if (!selectedSet.has(productId)) sameZoneSelection(productId, false);
@@ -667,13 +680,16 @@ export function CanvasViewport({ products, branchId, zone, dryZoneMarker, onDryZ
     if (!target.closest(".product-chip") && !target.closest(".zone-marker-strip") && !target.closest(".canvas-control")) {
       setContextMenu(null);
       setZoneMarkerContextMenu(null);
-      if (!selectionJustEnded.current) setSelectedIds([]);
+      if (!selectionJustEnded.current) { setSelectedIds([]); setTouchMultiSelect(false); }
     }
     selectionJustEnded.current = false;
   }, []);
 
   return <DndContext sensors={sensors} autoScroll={false} onDragStart={(event: DragStartEvent) => {
     if (pinchOccurred.current) return;
+    const isTouchDrag = event.activatorEvent.type === "touchstart";
+    touchDragActive.current = isTouchDrag;
+    if (isTouchDrag) setTouchMultiSelect(true);
     const topLabel = typeof event.active.id === "string" && event.active.id.startsWith(DRY_TOP_ZONE_MARKER_DRAG_ID_PREFIX)
       ? event.active.id.slice(DRY_TOP_ZONE_MARKER_DRAG_ID_PREFIX.length) as DryTopZoneMarkerLabel : null;
     if (event.active.id === DRY_ZONE_MARKER_DRAG_ID || (topLabel && DRY_TOP_ZONE_MARKER_LABELS.includes(topLabel))) {
@@ -685,9 +701,11 @@ export function CanvasViewport({ products, branchId, zone, dryZoneMarker, onDryZ
     const item = allProducts.find((product) => product.productId === Number(event.active.id));
     if (!item) return;
     const currentSelection = selectedIdsRef.current;
+    const compatibleSelection = currentSelection.filter((id) => allProducts.find((product) => product.productId === id)?.zone === item.zone);
     const ids = item.groupId
       ? allProducts.filter((product) => product.zone === item.zone && product.groupId === item.groupId).map((product) => product.productId)
-      : currentSelection.includes(item.productId) ? currentSelection : [item.productId];
+      : isTouchDrag ? (compatibleSelection.includes(item.productId) ? compatibleSelection : [...compatibleSelection, item.productId])
+        : currentSelection.includes(item.productId) ? currentSelection : [item.productId];
     draggingIdsRef.current = ids;
     setSelectedIds(ids);
     setDragPreview({ ids, x: 0, y: 0 });
@@ -696,7 +714,8 @@ export function CanvasViewport({ products, branchId, zone, dryZoneMarker, onDryZ
     if (markerDragActive.current || event.active.id === DRY_ZONE_MARKER_DRAG_ID || (typeof event.active.id === "string" && event.active.id.startsWith(DRY_TOP_ZONE_MARKER_DRAG_ID_PREFIX))) return;
     const currentScale = transformRef.current?.instance.transformState.scale ?? 1;
     if (draggingIdsRef.current.length) setDragPreview({ ids: draggingIdsRef.current, x: event.delta.x / currentScale, y: event.delta.y / currentScale });
-  }} onDragCancel={() => { markerDragActive.current = null; draggingIdsRef.current = []; setDragPreview(null); }} onDragEnd={(event: DragEndEvent) => {
+  }} onDragCancel={() => { markerDragActive.current = null; touchDragActive.current = false; draggingIdsRef.current = []; setDragPreview(null); }} onDragEnd={(event: DragEndEvent) => {
+    if (touchDragActive.current) window.setTimeout(() => { touchDragActive.current = false; }, 0);
     if (pinchOccurred.current) { markerDragActive.current = null; draggingIdsRef.current = []; setDragPreview(null); return; }
     const topLabel = typeof event.active.id === "string" && event.active.id.startsWith(DRY_TOP_ZONE_MARKER_DRAG_ID_PREFIX)
       ? event.active.id.slice(DRY_TOP_ZONE_MARKER_DRAG_ID_PREFIX.length) as DryTopZoneMarkerLabel : null;
@@ -796,7 +815,7 @@ export function CanvasViewport({ products, branchId, zone, dryZoneMarker, onDryZ
           </aside>
           {dryTopZoneMarkers && getWarehouseFloorPlan(branchId, "dry") && DRY_TOP_ZONE_MARKER_LABELS.map((label) => <TopZoneMarker key={label} label={label} layout={dryTopZoneMarkers[label]} scale={scale} disabled={dryTopZoneMarkers[label].locked || overview || spacePressed} onContextMenu={(event) => { event.preventDefault(); setContextMenu(null); setZoneMarkerContextMenu({ x: event.clientX, y: event.clientY, marker: label }); }} />)}
           {dryZoneMarker && getWarehouseFloorPlan(branchId, "dry") && <ZoneMarkerStrip layout={dryZoneMarker} scale={scale} disabled={dryZoneMarker.locked || overview || spacePressed} onContextMenu={(event) => { event.preventDefault(); setContextMenu(null); setZoneMarkerContextMenu({ x: event.clientX, y: event.clientY, marker: "side" }); }} />}
-          {visibleProducts.map((product) => <ProductChip key={product.productId} product={product} world={worldPositions.get(product.productId) ?? { x: product.x, y: product.y }} scale={scale} selected={selectedSet.has(product.productId)} disabled={spacePressed} overview={false} showDetails={showDetails} dimmed={matches !== null && !matches.has(product.productId)} showInventory={settings.showInventory} groupDelta={dragPreview?.ids.includes(product.productId) ? { x: dragPreview.x, y: dragPreview.y } : null} onSelect={sameZoneSelection} onContextMenu={openContextMenu} />)}
+          {visibleProducts.map((product) => <ProductChip key={product.productId} product={product} world={worldPositions.get(product.productId) ?? { x: product.x, y: product.y }} scale={scale} selected={selectedSet.has(product.productId)} disabled={spacePressed} overview={false} showDetails={showDetails} dimmed={matches !== null && !matches.has(product.productId)} showInventory={settings.showInventory} groupDelta={dragPreview?.ids.includes(product.productId) ? { x: dragPreview.x, y: dragPreview.y } : null} onSelect={sameZoneSelection} onTouchSelect={touchSelection} onContextMenu={openContextMenu} />)}
         </div>}</TransformComponent>
       </div>}
     </TransformWrapper>
